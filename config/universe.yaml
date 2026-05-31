@@ -1,0 +1,41 @@
+# Trading universe and backfill window for tradersjoy.
+#
+# We start strategy development on this curated 20-ticker watchlist. The engine
+# stays universe-agnostic, so expanding to the S&P 500 later is a config change,
+# not a code change.
+#
+# Note on history: not every ticker has 20 years of data. Names like TSLA (2010),
+# AVGO (2009), META (2012), PLTR (2020), and COIN (2021) only have data from their
+# IPO forward. Ingest stores whatever each ticker actually has; it never fabricates
+# pre-IPO bars. SPY, AAPL, MSFT, JPM, XOM, KO, WMT, UNH, CAT, AMZN, GOOGL, NFLX, AMD
+# reach back through the 2008 crisis.
+
+# Earliest date to attempt backfilling daily bars from. A couple of years of
+# pre-2008 baseline for the names that existed back then.
+start_date: "2005-01-01"
+
+watchlist:
+  # Mega-cap tech
+  - AAPL
+  - MSFT
+  - NVDA
+  - GOOGL
+  - AMZN
+  - META
+  - AVGO
+  # Sector representatives
+  - JPM   # financials
+  - XOM   # energy
+  - UNH   # healthcare
+  - WMT   # consumer staples / retail
+  - CAT   # industrials
+  - KO    # consumer staples (defensive)
+  # Higher-volatility names
+  - TSLA
+  - AMD
+  - NFLX
+  - COIN
+  - PLTR
+  # Benchmarks (broad-market ETFs)
+  - SPY
+  - QQQ
