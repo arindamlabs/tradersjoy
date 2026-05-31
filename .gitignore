@@ -1,0 +1,43 @@
+# Python
+__pycache__/
+*.py[cod]
+*$py.class
+*.so
+.Python
+*.egg-info/
+.pytest_cache/
+.ruff_cache/
+.mypy_cache/
+
+# Virtual envs / uv
+.venv/
+venv/
+env/
+
+# Environment / secrets
+.env
+.env.local
+.env.*.local
+
+# Local data store at repo root (bars, models, SQLite) — never in git.
+# Leading slash anchors this to the root so it doesn't match src/tradersjoy/data/.
+/data/
+*.sqlite
+*.sqlite3
+*.db
+
+# MLflow
+mlruns/
+mlartifacts/
+
+# Editors / OS
+.idea/
+.vscode/
+.DS_Store
+*.swp
+
+# Claude Code local-only settings
+.claude/settings.local.json
+
+# Jupyter
+.ipynb_checkpoints/
