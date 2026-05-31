@@ -1,10 +1,12 @@
 # tradersjoy
 
+[![CI](https://github.com/arindamlabs/tradersjoy/actions/workflows/ci.yml/badge.svg)](https://github.com/arindamlabs/tradersjoy/actions/workflows/ci.yml)
+
 An automated paper-trading system: daily-swing strategies on US equities,
 executed against the Alpaca paper-trading API. Built to be a serious learning
-project for quant infrastructure and ML-for-trading — not a get-rich-quick bot.
+project for quant infrastructure and ML-for-trading, not a get-rich-quick bot.
 
-**Status: Phase 0** (scaffolding). The CLI works, the package installs, CI is
+**Status: Phase 1** (data layer). The CLI works, the package installs, CI is
 green. Daily bars for a 20-ticker watchlist back to 2005 ingest into a local
 SQLite store via yfinance. No strategy yet.
 
