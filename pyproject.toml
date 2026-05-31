@@ -20,6 +20,7 @@ tradersjoy = "tradersjoy.cli:app"
 
 [dependency-groups]
 dev = [
+    "pdoc>=16.0.0",
     "pytest>=8.3",
     "ruff>=0.8",
 ]

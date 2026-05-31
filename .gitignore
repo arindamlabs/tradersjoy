@@ -30,6 +30,9 @@ env/
 mlruns/
 mlartifacts/
 
+# Generated API docs (built on demand with pdoc)
+/docs/api/
+
 # Editors / OS
 .idea/
 .vscode/
