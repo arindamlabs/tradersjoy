@@ -17,12 +17,38 @@ from __future__ import annotations
 from abc import ABC, abstractmethod
 from dataclasses import dataclass
 from datetime import date
-from typing import TYPE_CHECKING
+from typing import TYPE_CHECKING, Protocol, runtime_checkable
 
 if TYPE_CHECKING:
     from tradersjoy.backtest.data import BarHistory
-    from tradersjoy.backtest.portfolio import Portfolio
     from tradersjoy.core.types import Bar, Order
+
+
+@runtime_checkable
+class AccountView(Protocol):
+    """The read-only slice of account state a strategy is allowed to see.
+
+    This is the seam that lets one strategy run unchanged in a backtest and in
+    live trading. In a backtest the concrete object is a
+    :class:`~tradersjoy.backtest.portfolio.Portfolio`; live, it is an
+    :class:`~tradersjoy.broker.alpaca.AlpacaAccount` reflecting the real paper
+    account. A strategy depends only on this narrow contract, so it cannot tell
+    (or care) which one it holds, and cannot reach execution or order history.
+    """
+
+    @property
+    def equity(self) -> float:
+        """Total account value: cash plus the marked value of open positions."""
+        ...
+
+    @property
+    def cash(self) -> float:
+        """Uninvested cash currently available."""
+        ...
+
+    def qty(self, ticker: str) -> float:
+        """Shares currently held in ``ticker`` (``0.0`` if none)."""
+        ...
 
 
 @dataclass(frozen=True, slots=True)
@@ -34,14 +60,16 @@ class BarContext:
         bars: Today's bar for each ticker that traded, keyed by ticker. A ticker
             absent here did not trade today (pre-IPO, halted, or delisted).
         history: Access to all bars up to and including ``day`` for indicators.
-        portfolio: Current portfolio. Read it (``portfolio.equity``,
-            ``portfolio.qty(ticker)``) to size orders; never mutate it.
+        portfolio: Read-only account state (an :class:`AccountView`). Read it
+            (``portfolio.equity``, ``portfolio.qty(ticker)``) to size orders;
+            never mutate it. Backed by a simulated portfolio in a backtest and
+            the live Alpaca account in live trading.
     """
 
     day: date
     bars: dict[str, Bar]
     history: BarHistory
-    portfolio: Portfolio
+    portfolio: AccountView
 
 
 class Strategy(ABC):

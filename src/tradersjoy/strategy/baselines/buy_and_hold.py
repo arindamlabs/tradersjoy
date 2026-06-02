@@ -46,7 +46,14 @@ class BuyAndHold(Strategy):
         return "buyhold"
 
     def on_bar(self, ctx: BarContext) -> list[Order]:
-        """Buy each not-yet-held ticker the first day it trades, then hold."""
+        """Buy each not-yet-held ticker the first day it trades, then hold.
+
+        Live-safe: each daily live run is a fresh process with empty in-memory
+        state, so the decision to skip an already-owned ticker is driven by the
+        account's actual holdings (``qty > 0``), not just this object's memory.
+        That makes repeated runs idempotent: once a position exists, it is never
+        bought again.
+        """
         if self._start_equity is None:
             self._start_equity = ctx.portfolio.equity
         if len(self._bought) == len(self.tickers):
@@ -56,6 +63,11 @@ class BuyAndHold(Strategy):
         orders: list[Order] = []
         for ticker in self.tickers:
             if ticker in self._bought:
+                continue
+            if ctx.portfolio.qty(ticker) > 0:
+                # Already holding (e.g. a later live run in a new process);
+                # record it as bought so we never place a duplicate buy.
+                self._bought.add(ticker)
                 continue
             bar = ctx.bars.get(ticker)
             if bar is None:

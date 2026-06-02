@@ -165,10 +165,108 @@ def backtest(
 
 
 @app.command()
-def trade() -> None:
-    """Run the live paper-trading loop against the Alpaca paper broker."""
-    typer.echo("trade: not implemented yet (Phase 3)")
-    raise typer.Exit(code=1)
+def trade(
+    strategy: str = typer.Option("buyhold", help="Strategy to run: buyhold or sma."),
+    tickers: str | None = typer.Option(
+        None, help="Comma-separated tickers. Defaults to the universe watchlist."
+    ),
+    execute: bool = typer.Option(
+        False,
+        "--execute",
+        help="Actually place orders on the paper account. Omit for a safe dry run.",
+    ),
+    refresh: bool = typer.Option(
+        True, help="Refresh recent bars from yfinance before deciding."
+    ),
+    lookback_days: int = typer.Option(
+        400, help="Days of recent data to refresh before deciding."
+    ),
+    short_window: int = typer.Option(20, help="Fast SMA window (sma only)."),
+    long_window: int = typer.Option(50, help="Slow SMA window (sma only)."),
+) -> None:
+    """Run one live decision against the Alpaca paper account.
+
+    Refreshes recent bars, reads the paper account, lets the strategy decide on
+    the latest close, and prints the orders. By default this is a DRY RUN that
+    places nothing; pass ``--execute`` to actually submit the orders (they queue
+    for the next market open). Run it once per day, ideally after the close.
+
+    Exits with code 2 for an unknown strategy, empty universe, or missing data.
+    """
+    from datetime import timedelta
+
+    from tradersjoy.broker.alpaca import AlpacaBroker, plan_whole_share_orders
+    from tradersjoy.data.ingest import load_universe
+    from tradersjoy.data.store import Store
+    from tradersjoy.live.trader import LiveTrader
+    from tradersjoy.strategy.registry import build_strategy
+
+    if tickers:
+        tick_list = [t.strip().upper() for t in tickers.split(",") if t.strip()]
+    else:
+        tick_list, _ = load_universe()
+    if not tick_list:
+        typer.echo("No tickers to trade.")
+        raise typer.Exit(code=2)
+
+    try:
+        strat = build_strategy(
+            strategy, tick_list, short_window=short_window, long_window=long_window
+        )
+    except ValueError as exc:
+        typer.echo(str(exc))
+        raise typer.Exit(code=2) from exc
+
+    if refresh:
+        from tradersjoy.data.ingest import ingest as run_ingest
+        from tradersjoy.data.sources.yfinance_source import YFinanceSource
+
+        refresh_start = date.today() - timedelta(days=lookback_days)
+        typer.echo(f"Refreshing bars since {refresh_start.isoformat()}...")
+        results = run_ingest(YFinanceSource(), Store(), tick_list, refresh_start, None)
+        n_ok = sum(1 for r in results if r.error is None)
+        n_failed = len(results) - n_ok
+        msg = f"  refreshed {n_ok}/{len(tick_list)} tickers"
+        if n_failed:
+            msg += f", {n_failed} failed (using whatever is already stored)"
+        typer.echo(msg)
+
+    broker = AlpacaBroker()
+    trader = LiveTrader(broker, Store())
+
+    mode = "LIVE (paper) EXECUTION" if execute else "DRY RUN (no orders placed)"
+    typer.echo(f"\n=== {mode} ===")
+    try:
+        plan = trader.run_once(strat, tick_list, execute=execute)
+    except ValueError as exc:
+        typer.echo(str(exc))
+        raise typer.Exit(code=2) from exc
+
+    typer.echo(f"Decision date:  {plan.day.isoformat()}  (orders act on next open)")
+    typer.echo(f"Account equity: ${plan.equity:,.2f}")
+    typer.echo(f"Cash:           ${plan.cash:,.2f}")
+    typer.echo(f"P/L vs ${plan.starting_equity:,.0f}: ${plan.pnl:+,.2f}")
+    typer.echo(f"Strategy:       {plan.strategy_name}")
+
+    if not plan.orders:
+        typer.echo("\nNo orders today; nothing to do.")
+        return
+
+    if plan.executed:
+        typer.echo(f"\nSubmitted {len(plan.orders)} order intent(s):")
+        for line in plan.results:
+            typer.echo(f"  {line}")
+    else:
+        typer.echo(f"\nWould place {len(plan.orders)} order(s) (whole shares):")
+        for op in plan_whole_share_orders(plan.orders):
+            note = f"  ({op.note})" if op.note else ""
+            typer.echo(
+                f"  {op.side:4s} {op.shares:>6d}  {op.ticker:6s}"
+                f"  [requested {op.requested_qty:.4f}]{note}"
+            )
+        typer.echo(
+            "\nThis was a DRY RUN. Re-run with --execute to place these orders."
+        )
 
 
 @app.command()
