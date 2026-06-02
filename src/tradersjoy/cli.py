@@ -93,10 +93,75 @@ def ingest(
 
 
 @app.command()
-def backtest() -> None:
-    """Run a strategy against historical bars."""
-    typer.echo("backtest: not implemented yet (Phase 2)")
-    raise typer.Exit(code=1)
+def backtest(
+    strategy: str = typer.Option(
+        "buyhold", help="Strategy to run: buyhold or sma."
+    ),
+    tickers: str | None = typer.Option(
+        None, help="Comma-separated tickers. Defaults to the universe watchlist."
+    ),
+    start: str | None = typer.Option(
+        None, "--from", help="Backtest start date YYYY-MM-DD. Defaults to earliest."
+    ),
+    end: str | None = typer.Option(
+        None, "--to", help="Backtest end date YYYY-MM-DD. Defaults to latest."
+    ),
+    cash: float = typer.Option(100_000.0, help="Starting cash balance."),
+    slippage_bps: float = typer.Option(
+        5.0, help="Adverse slippage per fill, in basis points."
+    ),
+    short_window: int = typer.Option(20, help="Fast SMA window (sma only)."),
+    long_window: int = typer.Option(50, help="Slow SMA window (sma only)."),
+) -> None:
+    """Run a strategy against stored historical bars and print its scorecard.
+
+    Loads the requested tickers and window from the local store, replays them
+    through the chosen strategy with a simulated broker (orders fill at the next
+    session's open, with slippage), and reports total return, CAGR, Sharpe, max
+    drawdown, and hit rate.
+
+    Exits with code 2 for an unknown strategy or empty universe, and code 0 on a
+    completed run.
+    """
+    from tradersjoy.backtest.data import load_history
+    from tradersjoy.backtest.engine import run_backtest
+    from tradersjoy.broker.sim import SimBroker
+    from tradersjoy.data.ingest import load_universe
+    from tradersjoy.data.store import Store
+    from tradersjoy.strategy.registry import build_strategy
+
+    if tickers:
+        tick_list = [t.strip().upper() for t in tickers.split(",") if t.strip()]
+    else:
+        tick_list, _ = load_universe()
+    if not tick_list:
+        typer.echo("No tickers to backtest.")
+        raise typer.Exit(code=2)
+
+    try:
+        strat = build_strategy(
+            strategy, tick_list, short_window=short_window, long_window=long_window
+        )
+    except ValueError as exc:
+        typer.echo(str(exc))
+        raise typer.Exit(code=2) from exc
+
+    start_date = date.fromisoformat(start) if start else None
+    end_date = date.fromisoformat(end) if end else None
+
+    store = Store()
+    data = load_history(store, tick_list, start_date, end_date)
+    if not data.trading_days:
+        typer.echo(
+            "No bars found for the requested tickers/window. Run `ingest` first?"
+        )
+        raise typer.Exit(code=2)
+
+    broker = SimBroker(slippage_bps=slippage_bps)
+    result = run_backtest(strat, data, broker, cash, start_date, end_date)
+    typer.echo(result.summary())
+    if broker.rejections:
+        typer.echo(f"\nNote: {len(broker.rejections)} order(s) rejected (unfunded/uncovered).")
 
 
 @app.command()
