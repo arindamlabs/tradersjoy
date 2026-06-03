@@ -22,13 +22,21 @@ from dataclasses import dataclass
 from datetime import date
 
 from tradersjoy.backtest.data import BarHistory
-from tradersjoy.ml.features import MIN_BARS, feature_row, features_from_bars
+from tradersjoy.ml.features import (
+    MIN_BARS,
+    benchmark_returns,
+    feature_row,
+    features_from_bars,
+)
 from tradersjoy.ml.labels import (
     DEFAULT_HORIZON,
     DEFAULT_THRESHOLD,
     Label,
     forward_label,
 )
+
+#: Default market benchmark for the relative features. SPY is in the watchlist.
+DEFAULT_BENCHMARK: str = "SPY"
 
 
 @dataclass(frozen=True, slots=True)
@@ -55,11 +63,38 @@ class Sample:
         return feature_row(self.features)
 
 
+def build_benchmark_map(
+    history: BarHistory, benchmark: str
+) -> dict[date, dict[str, float]]:
+    """Precompute the benchmark's own returns per day, for the relative features.
+
+    Args:
+        history: The loaded bar panel (must include ``benchmark`` to be useful).
+        benchmark: Symbol whose moves the relative features are measured against.
+
+    Returns:
+        A mapping from each benchmark trading day to its
+        :func:`~tradersjoy.ml.features.benchmark_returns`. Empty if the benchmark
+        is absent, in which case the relative features fall back to neutral.
+    """
+    if not history.trading_days:
+        return {}
+    bars = history.history(benchmark, history.trading_days[-1])
+    closes = [b.adj_close for b in bars]
+    out: dict[date, dict[str, float]] = {}
+    for j in range(len(bars)):
+        bench = benchmark_returns(closes[: j + 1])
+        if bench is not None:
+            out[bars[j].day] = bench
+    return out
+
+
 def samples_for_ticker(
     history: BarHistory,
     ticker: str,
     horizon: int = DEFAULT_HORIZON,
     threshold: float = DEFAULT_THRESHOLD,
+    benchmark_map: dict[date, dict[str, float]] | None = None,
 ) -> list[Sample]:
     """Build every labelled-or-not sample for one ticker over its full history.
 
@@ -68,6 +103,8 @@ def samples_for_ticker(
         ticker: Symbol to build rows for.
         horizon: Forward look, in sessions, used to label each row.
         threshold: Forward-return threshold separating up (``1``) from down.
+        benchmark_map: Per-day benchmark returns from :func:`build_benchmark_map`,
+            used for the relative features. ``None`` makes them neutral.
 
     Returns:
         Samples in ascending day order, one per day that has at least
@@ -78,11 +115,12 @@ def samples_for_ticker(
     if len(bars) < MIN_BARS:
         return []
 
+    bmap = benchmark_map or {}
     closes = [b.adj_close for b in bars]
     days = [b.day for b in bars]
     out: list[Sample] = []
     for i in range(MIN_BARS - 1, len(bars)):
-        feats = features_from_bars(bars[: i + 1])
+        feats = features_from_bars(bars[: i + 1], benchmark=bmap.get(days[i]))
         if feats is None:  # defensive; MIN_BARS guarantees it is not
             continue
         label = forward_label(closes, days, i, horizon=horizon, threshold=threshold)
@@ -95,6 +133,7 @@ def build_dataset(
     tickers: list[str],
     horizon: int = DEFAULT_HORIZON,
     threshold: float = DEFAULT_THRESHOLD,
+    benchmark: str = DEFAULT_BENCHMARK,
 ) -> list[Sample]:
     """Assemble the full learning table across every ticker, sorted by day.
 
@@ -103,15 +142,24 @@ def build_dataset(
         tickers: Symbols to include.
         horizon: Forward look, in sessions, used to label each row.
         threshold: Forward-return threshold separating up from down.
+        benchmark: Market symbol for the relative features (default ``SPY``). If
+            it is not present in ``history`` the relative features stay neutral.
 
     Returns:
         All samples across tickers, sorted by ``(day, ticker)`` so a walk-forward
         split can slice cleanly along the time axis.
     """
+    benchmark_map = build_benchmark_map(history, benchmark)
     samples: list[Sample] = []
     for ticker in tickers:
         samples.extend(
-            samples_for_ticker(history, ticker, horizon=horizon, threshold=threshold)
+            samples_for_ticker(
+                history,
+                ticker,
+                horizon=horizon,
+                threshold=threshold,
+                benchmark_map=benchmark_map,
+            )
         )
     samples.sort(key=lambda s: (s.day, s.ticker))
     return samples

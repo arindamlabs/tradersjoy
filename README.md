@@ -93,9 +93,12 @@ Safety and honesty:
 
 The `train` command builds a learning table from the stored bars and fits a
 gradient-boosted-tree classifier to predict a simple target: **will this stock
-rise over the next 5 trading days?** The same features are computed live by the
-`ml` strategy, so there is no train/serve skew, and every feature is a function
-of the past only, so there is no look-ahead in the inputs.
+rise over the next 5 trading days?** It uses a small set of past-only features:
+multi-horizon returns, distance from 20/50/200-day averages, recent volatility,
+a volume ratio, an RSI oscillator, drawdown from the recent high, and crucially
+*market-relative* returns (this stock's move minus the benchmark's), since most
+of any one stock's daily move is just the whole market. The same features are
+computed live by the `ml` strategy, so there is no train/serve skew.
 
 The model is scored with **walk-forward validation**, the only honest way to
 evaluate a trading model: train on the past, test on the next unseen year, roll
@@ -113,11 +116,13 @@ Two deliberate honesty choices shape how results are read:
   up-day above a random down-day; 0.50 is pure luck. Ranking is what the strategy
   needs, since it buys the top-scored names.
 
-On the 20-ticker watchlist with these starter features, the first honest result
-is a near-coin-flip (AUC about 0.50, accuracy at or just below the base rate).
-That is the expected, sober baseline, and it is far more useful than an
-impressive number that turns out to be a leak. The next gains come from better
-*features*, validated the same honest way, not from a fancier model.
+On the 20-ticker watchlist the honest result is a near-coin-flip: AUC around
+0.51 and accuracy just below the base rate. The most-confident decile of picks
+does modestly better than average (a small positive lift in forward return),
+which is a faint, plausibly-real signal rather than a tradeable edge, the extra
+return would likely be swallowed by slippage. That is the expected, sober
+baseline, and far more useful than an impressive number that turns out to be a
+leak. Real gains, if they come, will be earned the same honest way.
 
 The walk-forward report is the trustworthy track record. Running
 `backtest --strategy ml` over the model's own training window is *in-sample* and

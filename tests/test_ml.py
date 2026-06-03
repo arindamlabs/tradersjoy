@@ -65,11 +65,24 @@ def test_ret_1_matches_hand_calculation() -> None:
     assert abs(feats["ret_1"] - expected) < 1e-12
 
 
+def test_relative_feature_subtracts_the_benchmark() -> None:
+    bars = _bars("X", MIN_BARS)
+    feats = features_from_bars(bars)  # no benchmark -> neutral
+    assert feats is not None
+    assert feats["rel_ret_5"] == 0.0 and feats["rel_ret_20"] == 0.0
+
+    rel = features_from_bars(bars, benchmark={"ret_5": 0.01, "ret_20": 0.03})
+    assert rel is not None
+    assert abs(rel["rel_ret_5"] - (feats["ret_5"] - 0.01)) < 1e-12
+    assert abs(rel["rel_ret_20"] - (feats["ret_20"] - 0.03)) < 1e-12
+
+
 def test_features_do_not_depend_on_future_bars() -> None:
     """Corrupting the LAST bar must not change any earlier day's features."""
     tickers = ["X"]
-    clean = BarHistory({"X": _bars("X", 90)})
-    bars2 = _bars("X", 90)
+    n = MIN_BARS + 30
+    clean = BarHistory({"X": _bars("X", n)})
+    bars2 = _bars("X", n)
     last = bars2[-1]
     bars2[-1] = Bar(  # absurd values on the final day only
         ticker=last.ticker,
@@ -108,7 +121,7 @@ def test_forward_label_direction_and_end_day() -> None:
 
 
 def test_recent_rows_are_unlabelled_and_matrix_rejects_them() -> None:
-    history = BarHistory({"X": _bars("X", 80)})
+    history = BarHistory({"X": _bars("X", MIN_BARS + 20)})
     samples = build_dataset(history, ["X"], horizon=5)
     # The final `horizon` rows have no known future yet.
     tail = sorted(samples, key=lambda s: s.day)[-5:]
