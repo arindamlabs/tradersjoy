@@ -6,11 +6,13 @@ An automated paper-trading system: daily-swing strategies on US equities,
 executed against the Alpaca paper-trading API. Built to be a serious learning
 project for quant infrastructure and ML-for-trading, not a get-rich-quick bot.
 
-**Status: Phase 3** (live paper trading). The CLI works, the package installs,
-CI is green. Daily bars for a 20-ticker watchlist back to 2005 ingest into a
-local SQLite store via yfinance; an event-driven backtester replays them through
-baseline strategies with realistic, no-look-ahead fills; and the same strategies
-can drive live orders against the Alpaca paper account (dry-run by default).
+**Status: Phase 4** (ML strategy). The CLI works, the package installs, CI is
+green. Daily bars for a 20-ticker watchlist back to 2005 ingest into a local
+SQLite store via yfinance; an event-driven backtester replays them through
+baseline strategies with realistic, no-look-ahead fills; the same strategies can
+drive live orders against the Alpaca paper account (dry-run by default); and a
+gradient-boosted-tree model can be trained and scored honestly with walk-forward
+validation.
 
 ## Setup
 
@@ -42,6 +44,12 @@ uv run tradersjoy trade --strategy buyhold
 
 # actually place those orders on the Alpaca paper account
 uv run tradersjoy trade --strategy buyhold --execute
+
+# train an ML model and score it honestly with walk-forward validation
+uv run tradersjoy train
+
+# run the trained model as a strategy (dry run)
+uv run tradersjoy trade --strategy ml --model data/models/ml.joblib
 ```
 
 ## Backtesting
@@ -81,6 +89,40 @@ Safety and honesty:
   ideally after the close, so orders queue for the next open and the timing
   matches the backtest's next-open assumption.
 
+## Machine-learning strategy
+
+The `train` command builds a learning table from the stored bars and fits a
+gradient-boosted-tree classifier to predict a simple target: **will this stock
+rise over the next 5 trading days?** The same features are computed live by the
+`ml` strategy, so there is no train/serve skew, and every feature is a function
+of the past only, so there is no look-ahead in the inputs.
+
+The model is scored with **walk-forward validation**, the only honest way to
+evaluate a trading model: train on the past, test on the next unseen year, roll
+forward, repeat. A row's 5-day answer window is *purged* at each train/test
+boundary so no sliver of the test year leaks into training. The naive
+alternative (a random train/test split) would let the model learn from its own
+future and is never used here.
+
+Two deliberate honesty choices shape how results are read:
+
+- **The baseline is the base rate, not 50%.** Because the market drifts up,
+  roughly 56% of 5-day windows are up days. A model must beat *that*, not a coin
+  flip, to mean anything; the scorecard prints accuracy next to the base rate.
+- **AUC measures ranking skill.** It is the chance the model ranks a random
+  up-day above a random down-day; 0.50 is pure luck. Ranking is what the strategy
+  needs, since it buys the top-scored names.
+
+On the 20-ticker watchlist with these starter features, the first honest result
+is a near-coin-flip (AUC about 0.50, accuracy at or just below the base rate).
+That is the expected, sober baseline, and it is far more useful than an
+impressive number that turns out to be a leak. The next gains come from better
+*features*, validated the same honest way, not from a fancier model.
+
+The walk-forward report is the trustworthy track record. Running
+`backtest --strategy ml` over the model's own training window is *in-sample* and
+flatters it; the CLI prints a warning to that effect.
+
 ## API documentation
 
 The code is documented with Google-style docstrings. Browse them as HTML with
@@ -102,7 +144,7 @@ uv run pdoc -d google tradersjoy -o docs/api
 | 1 | Data ingest (yfinance -> SQLite) | done |
 | 2 | Backtester + portfolio + baseline strategies | done |
 | 3 | Live paper-trading loop | done |
-| 4 | ML strategy with walk-forward validation | not started |
+| 4 | ML strategy with walk-forward validation | done |
 | 5 | Risk management (position sizing, stops, circuit-breaker) | not started |
 | 6 | Automation + Streamlit dashboard | not started |
 | 7 | Disciplined retraining loop | not started |

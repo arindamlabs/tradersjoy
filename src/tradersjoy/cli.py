@@ -112,6 +112,10 @@ def backtest(
     ),
     short_window: int = typer.Option(20, help="Fast SMA window (sma only)."),
     long_window: int = typer.Option(50, help="Slow SMA window (sma only)."),
+    model: str | None = typer.Option(
+        None, "--model", help="Path to a trained model (ml strategy only)."
+    ),
+    top_k: int = typer.Option(5, help="Names the ml strategy holds at once (ml only)."),
 ) -> None:
     """Run a strategy against stored historical bars and print its scorecard.
 
@@ -140,11 +144,22 @@ def backtest(
 
     try:
         strat = build_strategy(
-            strategy, tick_list, short_window=short_window, long_window=long_window
+            strategy,
+            tick_list,
+            short_window=short_window,
+            long_window=long_window,
+            model_path=model,
+            top_k=top_k,
         )
     except ValueError as exc:
         typer.echo(str(exc))
         raise typer.Exit(code=2) from exc
+
+    if strategy.strip().lower() == "ml":
+        typer.echo(
+            "Note: backtesting 'ml' over its own training window is IN-SAMPLE and "
+            "flatters the model. The honest score is the walk-forward from `train`."
+        )
 
     start_date = date.fromisoformat(start) if start else None
     end_date = date.fromisoformat(end) if end else None
@@ -183,6 +198,10 @@ def trade(
     ),
     short_window: int = typer.Option(20, help="Fast SMA window (sma only)."),
     long_window: int = typer.Option(50, help="Slow SMA window (sma only)."),
+    model: str | None = typer.Option(
+        None, "--model", help="Path to a trained model (ml strategy only)."
+    ),
+    top_k: int = typer.Option(5, help="Names the ml strategy holds at once (ml only)."),
 ) -> None:
     """Run one live decision against the Alpaca paper account.
 
@@ -211,7 +230,12 @@ def trade(
 
     try:
         strat = build_strategy(
-            strategy, tick_list, short_window=short_window, long_window=long_window
+            strategy,
+            tick_list,
+            short_window=short_window,
+            long_window=long_window,
+            model_path=model,
+            top_k=top_k,
         )
     except ValueError as exc:
         typer.echo(str(exc))
@@ -270,10 +294,104 @@ def trade(
 
 
 @app.command()
-def train() -> None:
-    """Train an ML strategy using walk-forward validation."""
-    typer.echo("train: not implemented yet (Phase 4)")
-    raise typer.Exit(code=1)
+def train(
+    tickers: str | None = typer.Option(
+        None, help="Comma-separated tickers. Defaults to the universe watchlist."
+    ),
+    horizon: int = typer.Option(
+        5, help="Forward look in trading days the label predicts over."
+    ),
+    threshold: float = typer.Option(
+        0.0, help="Forward return above which a day is labelled 'up'."
+    ),
+    train_years: int = typer.Option(
+        5, help="Initial years of history before the first walk-forward test year."
+    ),
+    start: str | None = typer.Option(
+        None, "--from", help="Earliest day to use YYYY-MM-DD. Defaults to earliest."
+    ),
+    end: str | None = typer.Option(
+        None, "--to", help="Latest day to use YYYY-MM-DD. Defaults to latest."
+    ),
+    model_out: str = typer.Option(
+        "data/models/ml.joblib", help="Where to save the final deployable model."
+    ),
+) -> None:
+    """Train an ML strategy and score it honestly with walk-forward validation.
+
+    Builds a learning table (features + a forward up/down label) from the stored
+    bars, runs a year-by-year walk-forward (train on the past, test on the next
+    unseen year) to produce an out-of-sample scorecard, then retrains one final
+    model on *all* labelled history and saves it for live use.
+
+    The walk-forward numbers are the honest track record; the saved model is the
+    one you would actually deploy. Exits with code 2 on an empty universe or too
+    little data to evaluate.
+    """
+    from tradersjoy.backtest.data import load_history
+    from tradersjoy.data.ingest import load_universe
+    from tradersjoy.data.store import Store
+    from tradersjoy.ml.dataset import build_dataset, labelled, matrix
+    from tradersjoy.ml.model import GBMModel
+    from tradersjoy.ml.walkforward import walk_forward
+
+    if tickers:
+        tick_list = [t.strip().upper() for t in tickers.split(",") if t.strip()]
+    else:
+        tick_list, _ = load_universe()
+    if not tick_list:
+        typer.echo("No tickers to train on.")
+        raise typer.Exit(code=2)
+
+    start_date = date.fromisoformat(start) if start else None
+    end_date = date.fromisoformat(end) if end else None
+
+    store = Store()
+    data = load_history(store, tick_list, start_date, end_date)
+    if not data.trading_days:
+        typer.echo("No bars found for the requested tickers/window. Run `ingest` first?")
+        raise typer.Exit(code=2)
+
+    typer.echo(
+        f"Building dataset: {len(tick_list)} tickers, "
+        f"label = up/down over next {horizon} day(s) (threshold {threshold:+.2%})..."
+    )
+    samples = build_dataset(data, tick_list, horizon=horizon, threshold=threshold)
+    labelled_samples = labelled(samples)
+    if len(labelled_samples) < 500:
+        typer.echo(
+            f"Only {len(labelled_samples)} labelled rows; too few to evaluate "
+            "honestly. Ingest more history or widen the ticker list."
+        )
+        raise typer.Exit(code=2)
+    typer.echo(
+        f"  {len(labelled_samples):,} labelled rows, "
+        f"{len(samples) - len(labelled_samples):,} most-recent rows held back "
+        "(no known future yet)."
+    )
+
+    typer.echo("\nRunning walk-forward validation (train past -> test next year)...")
+    result = walk_forward(labelled_samples, train_years=train_years)
+    typer.echo("")
+    typer.echo(result.summary())
+
+    if result.overall is not None and result.overall.auc < 0.52:
+        typer.echo(
+            "\nReading this honestly: an AUC this close to 0.50 means the model "
+            "has little or no real ranking edge yet. That is the expected, sober "
+            "first result, not a failure of the plumbing."
+        )
+
+    typer.echo("\nRetraining a final model on all labelled history...")
+    X, y = matrix(labelled_samples)
+    final = GBMModel().fit(X, y)
+    saved = final.save(model_out)
+    typer.echo(f"Saved deployable model -> {saved}")
+    typer.echo(
+        "\nUse it:\n"
+        f"  tradersjoy backtest --strategy ml --model {saved}   # in-sample; see caveat\n"
+        f"  tradersjoy trade    --strategy ml --model {saved}   # live dry run"
+    )
 
 
 @app.command()
