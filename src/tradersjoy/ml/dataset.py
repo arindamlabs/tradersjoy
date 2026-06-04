@@ -14,12 +14,24 @@ Two honesty properties are enforced here, not left to the caller:
   sessions actually exist after it. The most recent days therefore yield
   *unlabelled* samples, which are exactly what we feed the model to predict
   today, never to train on.
+
+The label can be framed two ways (see ``relative`` on :func:`build_dataset`):
+
+- **Absolute**: did this stock rise over the next ``horizon`` days? Simple, but
+  most of the answer is just the whole market moving.
+- **Relative (cross-sectional)**: did this stock beat the *universe median* over
+  the next ``horizon`` days? This subtracts the market-wide move out of the
+  target and asks only what the top-K strategy actually needs ("is this name
+  better than its peers"). The forward returns of *other* stocks are used to set
+  one stock's label, which is legitimate because labels are the answer key and
+  are only ever read during training, never fed in as a feature at predict time.
 """
 
 from __future__ import annotations
 
 from dataclasses import dataclass
 from datetime import date
+from statistics import median
 
 from tradersjoy.backtest.data import BarHistory
 from tradersjoy.ml.features import (
@@ -134,6 +146,7 @@ def build_dataset(
     horizon: int = DEFAULT_HORIZON,
     threshold: float = DEFAULT_THRESHOLD,
     benchmark: str = DEFAULT_BENCHMARK,
+    relative: bool = False,
 ) -> list[Sample]:
     """Assemble the full learning table across every ticker, sorted by day.
 
@@ -141,9 +154,16 @@ def build_dataset(
         history: The loaded bar panel.
         tickers: Symbols to include.
         horizon: Forward look, in sessions, used to label each row.
-        threshold: Forward-return threshold separating up from down.
+        threshold: Forward-return cut. In absolute mode (default) the bar a stock
+            must clear; in relative mode the *excess* over the day's median it
+            must clear (``0.0`` means simply beat the median).
         benchmark: Market symbol for the relative features (default ``SPY``). If
             it is not present in ``history`` the relative features stay neutral.
+            In ``relative`` labelling it is also the yardstick: it is excluded
+            from the cross-section and gets no label of its own.
+        relative: If ``True``, label each row by whether the stock beat the
+            *universe median* forward return that day (a cross-sectional ranking
+            target), instead of the absolute up/down outcome.
 
     Returns:
         All samples across tickers, sorted by ``(day, ticker)`` so a walk-forward
@@ -161,8 +181,58 @@ def build_dataset(
                 benchmark_map=benchmark_map,
             )
         )
+    if relative:
+        samples = _relativize(samples, threshold=threshold, benchmark=benchmark)
     samples.sort(key=lambda s: (s.day, s.ticker))
     return samples
+
+
+def _relativize(
+    samples: list[Sample], threshold: float, benchmark: str
+) -> list[Sample]:
+    """Re-label samples cross-sectionally: did each stock beat its peers that day?
+
+    Reuses the forward return already computed for the absolute label (every
+    labelled :class:`Sample` carries ``label.fwd_return`` and ``label.end_day``),
+    so no feature or future-window logic is duplicated or weakened. For each day
+    we take the median forward return across the non-benchmark names that have a
+    known future, then set ``value = 1`` where a stock's forward return cleared
+    that median by more than ``threshold``.
+
+    The benchmark itself is the yardstick, not a contestant: its rows (and the
+    most-recent rows that still have no future) come back unlabelled, so they are
+    never training targets. The look-ahead guarantee is untouched: only the
+    *label* sees other stocks' futures, and labels are read at training time
+    only, never served as a feature.
+
+    Args:
+        samples: Samples carrying absolute labels (from :func:`samples_for_ticker`).
+        threshold: Excess-over-median a stock must clear to be labelled ``1``.
+        benchmark: Symbol excluded from the cross-section and left unlabelled.
+
+    Returns:
+        New samples, same rows and features, with cross-sectional labels.
+    """
+    fwd_by_day: dict[date, list[float]] = {}
+    for s in samples:
+        if s.label is None or s.ticker == benchmark:
+            continue
+        fwd_by_day.setdefault(s.day, []).append(s.label.fwd_return)
+    medians = {day: median(vals) for day, vals in fwd_by_day.items()}
+
+    out: list[Sample] = []
+    for s in samples:
+        if s.label is None or s.ticker == benchmark or s.day not in medians:
+            label: Label | None = None
+        else:
+            excess = s.label.fwd_return - medians[s.day]
+            label = Label(
+                value=1 if excess > threshold else 0,
+                fwd_return=s.label.fwd_return,
+                end_day=s.label.end_day,
+            )
+        out.append(Sample(ticker=s.ticker, day=s.day, features=s.features, label=label))
+    return out
 
 
 def labelled(samples: list[Sample]) -> list[Sample]:

@@ -302,7 +302,15 @@ def train(
         5, help="Forward look in trading days the label predicts over."
     ),
     threshold: float = typer.Option(
-        0.0, help="Forward return above which a day is labelled 'up'."
+        0.0,
+        help="Return cut: absolute mode, the bar to clear; relative mode, the "
+        "excess over the day's median to clear.",
+    ),
+    relative: bool = typer.Option(
+        True,
+        "--relative/--absolute",
+        help="Label by beating the universe median (cross-sectional) vs plain "
+        "up/down. Relative aligns the target with what top-K actually needs.",
     ),
     train_years: int = typer.Option(
         5, help="Initial years of history before the first walk-forward test year."
@@ -352,11 +360,18 @@ def train(
         typer.echo("No bars found for the requested tickers/window. Run `ingest` first?")
         raise typer.Exit(code=2)
 
+    target = (
+        f"beat universe median over next {horizon} day(s)"
+        if relative
+        else f"up/down over next {horizon} day(s)"
+    )
     typer.echo(
         f"Building dataset: {len(tick_list)} tickers, "
-        f"label = up/down over next {horizon} day(s) (threshold {threshold:+.2%})..."
+        f"label = {target} (threshold {threshold:+.2%})..."
     )
-    samples = build_dataset(data, tick_list, horizon=horizon, threshold=threshold)
+    samples = build_dataset(
+        data, tick_list, horizon=horizon, threshold=threshold, relative=relative
+    )
     labelled_samples = labelled(samples)
     if len(labelled_samples) < 500:
         typer.echo(

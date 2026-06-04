@@ -92,8 +92,14 @@ Safety and honesty:
 ## Machine-learning strategy
 
 The `train` command builds a learning table from the stored bars and fits a
-gradient-boosted-tree classifier to predict a simple target: **will this stock
-rise over the next 5 trading days?** It uses a small set of past-only features:
+gradient-boosted-tree classifier. By default it predicts a **relative,
+cross-sectional** target: **will this stock beat the universe median over the
+next 5 trading days?** (Pass `--absolute` for the simpler "will it rise?"
+target.) The relative framing subtracts the market-wide move out of the answer
+and asks only what the top-K strategy actually needs, which name is better than
+its peers. The benchmark (SPY) is the yardstick for that comparison, so it is
+excluded from the ranked set and never becomes a training row. It uses a small
+set of past-only features:
 multi-horizon returns, distance from 20/50/200-day averages, recent volatility,
 a volume ratio, an RSI oscillator, drawdown from the recent high, and crucially
 *market-relative* returns (this stock's move minus the benchmark's), since most
@@ -109,20 +115,26 @@ future and is never used here.
 
 Two deliberate honesty choices shape how results are read:
 
-- **The baseline is the base rate, not 50%.** Because the market drifts up,
-  roughly 56% of 5-day windows are up days. A model must beat *that*, not a coin
-  flip, to mean anything; the scorecard prints accuracy next to the base rate.
+- **The baseline is the base rate, not 50%.** For the relative target about half
+  the names beat the median each day by construction, so the base rate sits near
+  50%; for the absolute target the market's upward drift pushes it to ~56%. A
+  model must beat *its own* base rate, not a coin flip, to mean anything; the
+  scorecard prints accuracy next to the base rate.
 - **AUC measures ranking skill.** It is the chance the model ranks a random
-  up-day above a random down-day; 0.50 is pure luck. Ranking is what the strategy
+  winner above a random loser; 0.50 is pure luck. Ranking is what the strategy
   needs, since it buys the top-scored names.
 
-On the 20-ticker watchlist the honest result is a near-coin-flip: AUC around
-0.51 and accuracy just below the base rate. The most-confident decile of picks
-does modestly better than average (a small positive lift in forward return),
-which is a faint, plausibly-real signal rather than a tradeable edge, the extra
-return would likely be swallowed by slippage. That is the expected, sober
-baseline, and far more useful than an impressive number that turns out to be a
-leak. Real gains, if they come, will be earned the same honest way.
+On the 20-ticker watchlist the honest result is still a near-coin-flip on raw
+ranking: AUC around 0.51 either way. But moving from the absolute to the relative
+target helped exactly where it should. Under the absolute label, accuracy (55.5%)
+actually sat *below* its base rate (56.2%), the model knew nothing useful. Under
+the relative label, accuracy (51.5%) sits a clear ~4 points *above* its ~48% base
+rate, and the most-confident decile's forward-return lift roughly doubled, from
++0.18% to +0.41% over 5 days. That +0.41% is the number that maps to the top-K
+strategy, and it moved the right way. It is still a faint, regime-dependent,
+plausibly-real signal rather than a tradeable edge (thin returns, inconsistent
+across years, and slippage would eat much of it), but it is progress measured and
+earned honestly. Real gains, if they come, will be earned the same way.
 
 The walk-forward report is the trustworthy track record. Running
 `backtest --strategy ml` over the model's own training window is *in-sample* and

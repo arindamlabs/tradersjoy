@@ -19,7 +19,7 @@ from datetime import date, timedelta
 
 from tradersjoy.backtest.data import BarHistory
 from tradersjoy.core.types import Bar
-from tradersjoy.ml.dataset import Sample, build_dataset, labelled, matrix
+from tradersjoy.ml.dataset import Sample, _relativize, build_dataset, labelled, matrix
 from tradersjoy.ml.features import FEATURE_NAMES, MIN_BARS, features_from_bars
 from tradersjoy.ml.labels import Label, forward_label
 from tradersjoy.ml.model import GBMModel
@@ -133,6 +133,70 @@ def test_recent_rows_are_unlabelled_and_matrix_rejects_them() -> None:
         assert "unlabelled" in str(exc)
     else:  # pragma: no cover
         raise AssertionError("matrix must reject unlabelled rows")
+
+
+# --- relative (cross-sectional) label -------------------------------------
+
+
+def test_relative_label_splits_each_day_at_the_universe_median() -> None:
+    """A stock is a 1 iff it beat that day's median; the benchmark is excluded."""
+    day, end = date(2021, 3, 1), date(2021, 3, 8)
+
+    def s(ticker: str, fwd: float) -> Sample:
+        feats = {name: 0.0 for name in FEATURE_NAMES}
+        return Sample(ticker, day, feats, Label(value=0, fwd_return=fwd, end_day=end))
+
+    # Non-benchmark forward returns {A: .05, B: .01, C: -.02} -> median .01.
+    samples = [s("A", 0.05), s("B", 0.01), s("C", -0.02), s("SPY", 0.10)]
+    by = {x.ticker: x.label for x in _relativize(samples, threshold=0.0, benchmark="SPY")}
+
+    assert by["A"].value == 1  # above the median
+    assert by["B"].value == 0  # exactly at the median is not "beating" it
+    assert by["C"].value == 0  # below the median
+    assert by["SPY"] is None  # benchmark is the yardstick, never a training row
+
+
+def test_relative_label_is_balanced_and_excludes_the_benchmark() -> None:
+    """End to end: divergent tickers get a roughly 50/50, benchmark-free target."""
+
+    def sloped(ticker: str, slope: float, n: int) -> list[Bar]:
+        out: list[Bar] = []
+        for i in range(n):
+            price = 100.0 + slope * i
+            out.append(
+                Bar(
+                    ticker=ticker,
+                    day=date(2020, 1, 1) + timedelta(days=i),
+                    open=price,
+                    high=price + 1,
+                    low=price - 1,
+                    close=price,
+                    adj_close=price,
+                    volume=1000,
+                    source="test",
+                )
+            )
+        return out
+
+    n = MIN_BARS + 40
+    # Distinct slopes -> a strict, stable forward-return ordering A>B>C>D each day.
+    panel = {
+        "A": sloped("A", 2.0, n),
+        "B": sloped("B", 1.0, n),
+        "C": sloped("C", 0.5, n),
+        "D": sloped("D", 0.25, n),
+        "SPY": sloped("SPY", 1.0, n),
+    }
+    history = BarHistory(panel)
+    samples = build_dataset(history, list(panel), horizon=5, relative=True)
+    rows = labelled(samples)
+
+    # The benchmark is never a labelled training row.
+    assert all(s.ticker != "SPY" for s in rows)
+    # Among A,B,C,D the two fastest beat the median, the two slowest do not.
+    per_ticker = {t: {s.label.value for s in rows if s.ticker == t} for t in "ABCD"}
+    assert per_ticker["A"] == {1} and per_ticker["B"] == {1}
+    assert per_ticker["C"] == {0} and per_ticker["D"] == {0}
 
 
 # --- walk-forward purge ---------------------------------------------------
