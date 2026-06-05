@@ -116,6 +116,12 @@ def backtest(
         None, "--model", help="Path to a trained model (ml strategy only)."
     ),
     top_k: int = typer.Option(5, help="Names the ml strategy holds at once (ml only)."),
+    risk: bool = typer.Option(
+        False,
+        "--risk/--no-risk",
+        help="Wrap the strategy in the risk layer (position sizing, exposure cap, "
+        "stop-loss, circuit breaker).",
+    ),
 ) -> None:
     """Run a strategy against stored historical bars and print its scorecard.
 
@@ -150,6 +156,7 @@ def backtest(
             long_window=long_window,
             model_path=model,
             top_k=top_k,
+            risk=risk,
         )
     except ValueError as exc:
         typer.echo(str(exc))
@@ -202,6 +209,12 @@ def trade(
         None, "--model", help="Path to a trained model (ml strategy only)."
     ),
     top_k: int = typer.Option(5, help="Names the ml strategy holds at once (ml only)."),
+    risk: bool = typer.Option(
+        False,
+        "--risk/--no-risk",
+        help="Wrap the strategy in the risk layer (position sizing, exposure cap, "
+        "stop-loss, circuit breaker).",
+    ),
 ) -> None:
     """Run one live decision against the Alpaca paper account.
 
@@ -236,6 +249,7 @@ def trade(
             long_window=long_window,
             model_path=model,
             top_k=top_k,
+            risk=risk,
         )
     except ValueError as exc:
         typer.echo(str(exc))

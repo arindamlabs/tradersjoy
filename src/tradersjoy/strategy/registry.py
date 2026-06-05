@@ -22,6 +22,7 @@ def build_strategy(
     long_window: int = 50,
     model_path: str | None = None,
     top_k: int = 5,
+    risk: bool = False,
 ) -> Strategy:
     """Construct a strategy by name for the given universe.
 
@@ -38,9 +39,14 @@ def build_strategy(
         model_path: Path to a model saved by ``tradersjoy train`` (``ml`` only,
             required).
         top_k: Number of names the ML strategy holds at once (``ml`` only).
+        risk: If true, wrap the built strategy in a
+            :class:`~tradersjoy.risk.manager.RiskManagedStrategy` so position
+            sizing, the exposure cap, the stop-loss, and the circuit breaker are
+            enforced on its orders.
 
     Returns:
-        The constructed :class:`~tradersjoy.strategy.base.Strategy`.
+        The constructed :class:`~tradersjoy.strategy.base.Strategy`, optionally
+        wrapped in the risk layer.
 
     Raises:
         ValueError: If ``name`` is not a known strategy, or ``ml`` is requested
@@ -48,10 +54,10 @@ def build_strategy(
     """
     key = name.strip().lower()
     if key in ("buyhold", "buy_and_hold"):
-        return BuyAndHold(tickers)
-    if key in ("sma", "sma_crossover"):
-        return SMACrossover(tickers, short_window=short_window, long_window=long_window)
-    if key == "ml":
+        inner: Strategy = BuyAndHold(tickers)
+    elif key in ("sma", "sma_crossover"):
+        inner = SMACrossover(tickers, short_window=short_window, long_window=long_window)
+    elif key == "ml":
         if not model_path:
             raise ValueError(
                 "the 'ml' strategy needs a trained model; pass --model PATH "
@@ -60,7 +66,14 @@ def build_strategy(
         # Imported lazily so non-ML commands never pay for the ML stack.
         from tradersjoy.strategy.ml.strategy import MLStrategy
 
-        return MLStrategy.from_path(tickers, model_path, top_k=top_k)
-    raise ValueError(
-        f"Unknown strategy {name!r}. Choose from: {', '.join(STRATEGY_NAMES)}."
-    )
+        inner = MLStrategy.from_path(tickers, model_path, top_k=top_k)
+    else:
+        raise ValueError(
+            f"Unknown strategy {name!r}. Choose from: {', '.join(STRATEGY_NAMES)}."
+        )
+
+    if risk:
+        from tradersjoy.risk.manager import RiskManagedStrategy
+
+        return RiskManagedStrategy(tickers, inner)
+    return inner

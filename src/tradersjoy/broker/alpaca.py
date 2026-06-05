@@ -88,21 +88,35 @@ class AlpacaAccount:
         cash: Uninvested cash available.
     """
 
-    def __init__(self, equity: float, cash: float, positions: dict[str, float]) -> None:
+    def __init__(
+        self,
+        equity: float,
+        cash: float,
+        positions: dict[str, float],
+        avg_costs: dict[str, float] | None = None,
+    ) -> None:
         """Build a snapshot from already-fetched account values.
 
         Args:
             equity: Total account value.
             cash: Available cash.
             positions: Held share quantity keyed by ticker.
+            avg_costs: Average entry price per share keyed by ticker, for a
+                cost-basis stop-loss. Defaults to empty (stops simply skip names
+                whose cost basis is unknown).
         """
         self.equity = equity
         self.cash = cash
         self._positions = positions
+        self._avg_costs = avg_costs or {}
 
     def qty(self, ticker: str) -> float:
         """Shares currently held in ``ticker`` (``0.0`` if none)."""
         return self._positions.get(ticker, 0.0)
+
+    def avg_cost(self, ticker: str) -> float:
+        """Average entry price per share in ``ticker`` (``0.0`` if none)."""
+        return self._avg_costs.get(ticker, 0.0)
 
 
 class AlpacaBroker:
@@ -135,10 +149,12 @@ class AlpacaBroker:
             share quantities.
         """
         acct = self._client.get_account()
-        positions = {
-            p.symbol: float(p.qty) for p in self._client.get_all_positions()
-        }
-        return AlpacaAccount(float(acct.equity), float(acct.cash), positions)
+        live_positions = self._client.get_all_positions()
+        positions = {p.symbol: float(p.qty) for p in live_positions}
+        avg_costs = {p.symbol: float(p.avg_entry_price) for p in live_positions}
+        return AlpacaAccount(
+            float(acct.equity), float(acct.cash), positions, avg_costs
+        )
 
     def _open_order_symbols(self) -> set[str]:
         """Return the set of tickers that currently have an open order."""

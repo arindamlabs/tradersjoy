@@ -50,6 +50,15 @@ class AccountView(Protocol):
         """Shares currently held in ``ticker`` (``0.0`` if none)."""
         ...
 
+    def avg_cost(self, ticker: str) -> float:
+        """Average price paid per share for the open position (``0.0`` if none).
+
+        Reported by the broker (live) or the portfolio (backtest), so a
+        cost-basis stop-loss can be evaluated statelessly, identically in both,
+        without the strategy having to remember its own entry prices.
+        """
+        ...
+
 
 @dataclass(frozen=True, slots=True)
 class BarContext:

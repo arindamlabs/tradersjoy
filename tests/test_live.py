@@ -22,14 +22,22 @@ class FakeAccount:
     """Minimal stand-in satisfying the AccountView contract."""
 
     def __init__(
-        self, equity: float, cash: float, positions: dict[str, float] | None = None
+        self,
+        equity: float,
+        cash: float,
+        positions: dict[str, float] | None = None,
+        avg_costs: dict[str, float] | None = None,
     ) -> None:
         self.equity = equity
         self.cash = cash
         self._positions = positions or {}
+        self._avg_costs = avg_costs or {}
 
     def qty(self, ticker: str) -> float:
         return self._positions.get(ticker, 0.0)
+
+    def avg_cost(self, ticker: str) -> float:
+        return self._avg_costs.get(ticker, 0.0)
 
 
 class FakeBroker:

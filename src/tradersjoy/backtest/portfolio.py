@@ -55,6 +55,11 @@ class Portfolio:
         pos = self.positions.get(ticker)
         return pos.quantity if pos else 0.0
 
+    def avg_cost(self, ticker: str) -> float:
+        """Return the commission-inclusive average cost of ``ticker`` (``0.0`` if none)."""
+        pos = self.positions.get(ticker)
+        return pos.avg_cost if pos else 0.0
+
     @property
     def equity(self) -> float:
         """Total portfolio value: cash plus open positions at last-known prices.

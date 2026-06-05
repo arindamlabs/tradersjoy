@@ -6,13 +6,15 @@ An automated paper-trading system: daily-swing strategies on US equities,
 executed against the Alpaca paper-trading API. Built to be a serious learning
 project for quant infrastructure and ML-for-trading, not a get-rich-quick bot.
 
-**Status: Phase 4** (ML strategy). The CLI works, the package installs, CI is
+**Status: Phase 5** (risk management). The CLI works, the package installs, CI is
 green. Daily bars for a 20-ticker watchlist back to 2005 ingest into a local
 SQLite store via yfinance; an event-driven backtester replays them through
 baseline strategies with realistic, no-look-ahead fills; the same strategies can
-drive live orders against the Alpaca paper account (dry-run by default); and a
+drive live orders against the Alpaca paper account (dry-run by default); a
 gradient-boosted-tree model can be trained and scored honestly with walk-forward
-validation.
+validation; and any strategy can be wrapped in a stateless risk layer (position
+sizing, exposure cap, stop-loss, circuit breaker) that behaves identically in
+backtest and live.
 
 ## Setup
 
@@ -140,6 +142,44 @@ The walk-forward report is the trustworthy track record. Running
 `backtest --strategy ml` over the model's own training window is *in-sample* and
 flatters it; the CLI prints a warning to that effect.
 
+## Risk management
+
+Any strategy can be wrapped in a risk layer that sits between it and the broker:
+the strategy proposes orders, the layer rewrites them, and only the rewritten set
+reaches the market. Because the wrapper is itself a `Strategy`, it runs unchanged
+in backtest and live. Add `--risk` to `backtest` or `trade`:
+
+```bash
+uv run tradersjoy backtest --strategy ml --model data/models/ml.joblib --risk
+uv run tradersjoy trade    --strategy buyhold --risk        # dry run, with rails
+```
+
+Four rails, all **stateless**, recomputed each day from inputs the backtest and
+the live account expose identically (current quantities, the broker-reported cost
+basis, and price history). That is deliberate: a trailing stop or a peak-equity
+breaker would need memory the live process loses when it restarts each day, and
+would then behave differently live than in the backtest. We avoid that trap.
+
+- **Position sizing.** No single name may exceed 20% of equity; oversized buys
+  are trimmed.
+- **Exposure cap.** Total invested never exceeds 100% of equity, so the account's
+  2x margin is structurally never used.
+- **Stop-loss.** A held name trading 10% or more below its cost basis is fully
+  exited (and not re-bought that day). It is checked on the close and filled at
+  the next open, matching the backtester's no-look-ahead rule rather than
+  pretending we can fill intraday.
+- **Circuit breaker.** While SPY sits 15% or more below its 60-day high, new buys
+  are blocked (exits still go through), so we stop adding risk into a crash.
+
+An honest caveat, straight from the backtest: the rails are not free. On
+buy-and-hold over 2005-2026 they cut the worst drawdown from -52% to -31%,
+exactly their job, but they also roughly halved CAGR (26% to 13%) and *lowered*
+risk-adjusted return (Sharpe 1.00 to 0.77), because a naive stop sells into
+weakness and the breaker keeps you out of the rebound. On a basket of secular
+winners, holding through drawdowns historically won. Protection has a price; the
+limits are knobs, not gospel, and the right setting depends on the universe and
+your tolerance for drawdown versus give-up in return.
+
 ## API documentation
 
 The code is documented with Google-style docstrings. Browse them as HTML with
@@ -162,7 +202,7 @@ uv run pdoc -d google tradersjoy -o docs/api
 | 2 | Backtester + portfolio + baseline strategies | done |
 | 3 | Live paper-trading loop | done |
 | 4 | ML strategy with walk-forward validation | done |
-| 5 | Risk management (position sizing, stops, circuit-breaker) | not started |
+| 5 | Risk management (position sizing, stops, circuit-breaker) | done |
 | 6 | Automation + Streamlit dashboard | not started |
 | 7 | Disciplined retraining loop | not started |
 
