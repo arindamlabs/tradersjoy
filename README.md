@@ -6,15 +6,17 @@ An automated paper-trading system: daily-swing strategies on US equities,
 executed against the Alpaca paper-trading API. Built to be a serious learning
 project for quant infrastructure and ML-for-trading, not a get-rich-quick bot.
 
-**Status: Phase 5** (risk management). The CLI works, the package installs, CI is
-green. Daily bars for a 20-ticker watchlist back to 2005 ingest into a local
-SQLite store via yfinance; an event-driven backtester replays them through
-baseline strategies with realistic, no-look-ahead fills; the same strategies can
-drive live orders against the Alpaca paper account (dry-run by default); a
-gradient-boosted-tree model can be trained and scored honestly with walk-forward
-validation; and any strategy can be wrapped in a stateless risk layer (position
-sizing, exposure cap, stop-loss, circuit breaker) that behaves identically in
-backtest and live.
+**Status: Phase 6** (run journal + dashboard). The CLI works, the package
+installs, CI is green. Daily bars for a 20-ticker watchlist back to 2005 ingest
+into a local SQLite store via yfinance; an event-driven backtester replays them
+through baseline strategies with realistic, no-look-ahead fills; the same
+strategies can drive live orders against the Alpaca paper account (dry-run by
+default); a gradient-boosted-tree model can be trained and scored honestly with
+walk-forward validation; any strategy can be wrapped in a stateless risk layer
+(position sizing, exposure cap, stop-loss, circuit breaker) that behaves
+identically in backtest and live; and every live run is recorded to a local
+journal that a read-only Streamlit dashboard reads back as an equity curve and a
+decision log.
 
 ## Setup
 
@@ -52,6 +54,10 @@ uv run tradersjoy train
 
 # run the trained model as a strategy (dry run)
 uv run tradersjoy trade --strategy ml --model data/models/ml.joblib
+
+# install the dashboard extra, then launch the read-only web dashboard
+uv sync --extra dashboard
+uv run tradersjoy dashboard      # opens http://localhost:8501
 ```
 
 ## Backtesting
@@ -180,6 +186,41 @@ winners, holding through drawdowns historically won. Protection has a price; the
 limits are knobs, not gospel, and the right setting depends on the universe and
 your tolerance for drawdown versus give-up in return.
 
+## Dashboard and the run journal
+
+Every live `trade` run is recorded to a local **run journal** (a table in the
+same SQLite file as the price data): the decision date, the strategy, account
+equity and cash at the time, whether orders were actually placed, and the orders
+themselves. Dry runs are journaled too, so the record captures what the model
+*wanted* on days nothing was placed, not just the days it acted. The journal is
+ours, so unlike Alpaca's own history it survives a paper-account reset. Pass
+`--no-journal` to skip recording a throwaway run.
+
+The journal exists because the trading system is otherwise stateless: `trade`
+reads the account, decides, and forgets. Alpaca remembers the account; the
+journal is what lets the bot remember its own decisions.
+
+A read-only **Streamlit dashboard** reads both sources and shows them on one
+page: the live account snapshot, current positions and pending orders pulled
+straight from Alpaca, an equity curve built from the journal, and a decision log.
+
+```bash
+uv sync --extra dashboard        # one-time: install the dashboard dependency
+uv run tradersjoy dashboard      # serve at http://localhost:8501
+```
+
+It is deliberately **read-only**: the dashboard never places or cancels an order,
+so opening it to watch is always safe. The order-placing path stays in the `trade`
+command alone. Early on the equity curve is a single point and fills in one
+session at a time as the bot runs each day, which is honest rather than a
+back-filled illusion of history.
+
+Automation (running `trade` on a daily schedule, unattended) is the other half
+of this phase and is deliberately **not wired up yet**: it places orders while
+no one is watching, which is a bigger step to take right after the first manual
+order. The dashboard comes first so there is something to watch; scheduled
+execution is a later, deliberate addition.
+
 ## API documentation
 
 The code is documented with Google-style docstrings. Browse them as HTML with
@@ -203,7 +244,8 @@ uv run pdoc -d google tradersjoy -o docs/api
 | 3 | Live paper-trading loop | done |
 | 4 | ML strategy with walk-forward validation | done |
 | 5 | Risk management (position sizing, stops, circuit-breaker) | done |
-| 6 | Automation + Streamlit dashboard | not started |
+| 6 | Run journal + Streamlit dashboard | done |
+| 6b | Scheduled automation (unattended daily run) | not started |
 | 7 | Disciplined retraining loop | not started |
 
 ## Design principles

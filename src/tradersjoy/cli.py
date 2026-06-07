@@ -215,6 +215,12 @@ def trade(
         help="Wrap the strategy in the risk layer (position sizing, exposure cap, "
         "stop-loss, circuit breaker).",
     ),
+    journal: bool = typer.Option(
+        True,
+        "--journal/--no-journal",
+        help="Record this run (decision, orders, equity) to the local journal the "
+        "dashboard reads. Use --no-journal for throwaway tinkering.",
+    ),
 ) -> None:
     """Run one live decision against the Alpaca paper account.
 
@@ -279,6 +285,15 @@ def trade(
     except ValueError as exc:
         typer.echo(str(exc))
         raise typer.Exit(code=2) from exc
+
+    if journal:
+        from datetime import datetime
+
+        from tradersjoy.live.journal import Journal
+
+        j = Journal()
+        j.init_db()
+        j.record_plan(plan, run_at=datetime.now())
 
     typer.echo(f"Decision date:  {plan.day.isoformat()}  (orders act on next open)")
     typer.echo(f"Account equity: ${plan.equity:,.2f}")
@@ -424,9 +439,47 @@ def train(
 
 
 @app.command()
-def dashboard() -> None:
-    """Launch the Streamlit dashboard."""
-    typer.echo("dashboard: not implemented yet (Phase 6)")
+def dashboard(
+    port: int = typer.Option(8501, help="Port for the local Streamlit server."),
+) -> None:
+    """Launch the read-only Streamlit dashboard for the paper account.
+
+    Shows the live account snapshot, positions, and pending orders from Alpaca,
+    plus the local run journal (equity curve and decision log). It never places
+    or cancels an order. Requires the dashboard extra:
+
+        uv sync --extra dashboard
+
+    Exits with code 2 if Streamlit is not installed.
+    """
+    import importlib.util
+    import subprocess
+    import sys
+    from pathlib import Path
+
+    if importlib.util.find_spec("streamlit") is None:
+        typer.echo(
+            "Streamlit isn't installed. Add the dashboard extra first:\n"
+            "  uv sync --extra dashboard"
+        )
+        raise typer.Exit(code=2)
+
+    app_path = Path(__file__).resolve().parent / "dashboard" / "app.py"
+    typer.echo(f"Launching dashboard at http://localhost:{port}  (Ctrl-C to stop)...")
+    subprocess.run(
+        [
+            sys.executable,
+            "-m",
+            "streamlit",
+            "run",
+            str(app_path),
+            "--server.port",
+            str(port),
+            "--server.headless",
+            "true",
+        ],
+        check=False,
+    )
     raise typer.Exit(code=1)
 
 

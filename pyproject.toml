@@ -16,6 +16,11 @@ dependencies = [
     "scikit-learn>=1.9.0",
 ]
 
+[project.optional-dependencies]
+dashboard = [
+    "streamlit>=1.40",
+]
+
 [project.scripts]
 tradersjoy = "tradersjoy.cli:app"
 

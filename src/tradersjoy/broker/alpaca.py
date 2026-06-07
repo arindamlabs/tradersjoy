@@ -156,18 +156,66 @@ class AlpacaBroker:
             float(acct.equity), float(acct.cash), positions, avg_costs
         )
 
-    def _open_order_symbols(self) -> set[str]:
-        """Return the set of tickers that currently have an open order."""
+    def _open_orders(self) -> list:
+        """Return Alpaca's currently open orders (queued/partially filled)."""
         try:
             from alpaca.trading.enums import QueryOrderStatus
             from alpaca.trading.requests import GetOrdersRequest
 
-            orders = self._client.get_orders(
+            return self._client.get_orders(
                 GetOrdersRequest(status=QueryOrderStatus.OPEN)
             )
         except Exception:  # noqa: BLE001 - any failure falls back to the default list
-            orders = self._client.get_orders()
-        return {o.symbol for o in orders}
+            return self._client.get_orders()
+
+    def _open_order_symbols(self) -> set[str]:
+        """Return the set of tickers that currently have an open order."""
+        return {o.symbol for o in self._open_orders()}
+
+    def positions_detail(self) -> list[dict]:
+        """Return rich per-position data for display (not used by strategies).
+
+        Unlike :meth:`get_account`, which exposes only what a strategy reads,
+        this keeps the market value and unrealised P/L Alpaca reports, for the
+        dashboard's positions table.
+
+        Returns:
+            One dict per open position with ticker, share quantity, average cost,
+            current price, market value, and unrealised P/L (dollar and percent).
+        """
+        out: list[dict] = []
+        for p in self._client.get_all_positions():
+            out.append(
+                {
+                    "ticker": p.symbol,
+                    "qty": float(p.qty),
+                    "avg_cost": float(p.avg_entry_price),
+                    "price": float(p.current_price),
+                    "market_value": float(p.market_value),
+                    "unrealized_pl": float(p.unrealized_pl),
+                    "unrealized_plpc": float(p.unrealized_plpc),
+                }
+            )
+        return out
+
+    def open_orders(self) -> list[dict]:
+        """Return the currently open (pending) orders for display.
+
+        Returns:
+            One dict per open order with ticker, side, quantity, and status.
+            Empty when nothing is queued.
+        """
+        out: list[dict] = []
+        for o in self._open_orders():
+            out.append(
+                {
+                    "ticker": o.symbol,
+                    "side": getattr(o.side, "value", str(o.side)),
+                    "qty": float(o.qty) if o.qty is not None else 0.0,
+                    "status": getattr(o.status, "value", str(o.status)),
+                }
+            )
+        return out
 
     def submit(self, orders: Sequence[Order]) -> list[str]:
         """Place whole-share market orders for ``orders``, skipping unsafe ones.
