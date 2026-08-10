@@ -37,15 +37,20 @@ concurrency:
 
 env:
   # ---------------------------------------------------------------------------
-  # DRY RUN BY DEFAULT for the scheduled run. Every guard runs, data refreshes,
-  # the decision is journalled -- and nothing is placed.
+  # LIVE. The scheduled run places real orders on the Alpaca PAPER account.
   #
-  # Change "" to "--execute" when you are ready to let it trade unattended.
-  # Do not do that until the dry-run journal shows the turnover is survivable:
-  # a top-5 ranker that rotates the whole book daily loses to slippage no matter
-  # how good the model is.
+  # Set back to "" to return to dry runs. That one edit is the whole switch:
+  # every guard, the journal, and the heartbeat behave identically either way,
+  # the only difference is whether orders are submitted.
+  #
+  # Turnover was measured before enabling this (~1.4 of 5 names replaced per
+  # rebalance at weekly cadence, ~2%/year slippage drag) so the churn is
+  # survivable. What is NOT established is an edge: walk-forward AUC is ~0.51
+  # and out-of-sample the strategy performs about like buy-and-hold. This runs
+  # to prove the machinery end to end, not to harvest alpha. Read the equity
+  # curve accordingly.
   # ---------------------------------------------------------------------------
-  SCHEDULED_EXECUTE: ""
+  SCHEDULED_EXECUTE: "--execute"
 
 jobs:
   decide:
