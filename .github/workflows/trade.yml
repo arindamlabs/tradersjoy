@@ -51,14 +51,14 @@ jobs:
   decide:
     runs-on: ubuntu-latest
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v7
         with:
           # Full history so the journal commit can rebase cleanly onto anything
           # that landed while this run was deciding.
           fetch-depth: 0
 
       - name: Install uv
-        uses: astral-sh/setup-uv@v4
+        uses: astral-sh/setup-uv@v9
         with:
           enable-cache: true
 
