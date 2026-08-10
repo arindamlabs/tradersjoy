@@ -23,6 +23,7 @@ def build_strategy(
     model_path: str | None = None,
     top_k: int = 5,
     risk: bool = False,
+    risk_profile: str = "full",
     rebalance: str = "weekly",
 ) -> Strategy:
     """Construct a strategy by name for the given universe.
@@ -40,6 +41,9 @@ def build_strategy(
         model_path: Path to a model saved by ``tradersjoy train`` (``ml`` only,
             required).
         top_k: Number of names the ML strategy holds at once (``ml`` only).
+        risk_profile: Which named bundle of limits the risk layer enforces;
+            see :data:`~tradersjoy.risk.limits.RISK_PROFILES`. Ignored unless
+            ``risk`` is set.
         risk: If true, wrap the built strategy in a
             :class:`~tradersjoy.risk.manager.RiskManagedStrategy` so position
             sizing, the exposure cap, the stop-loss, and the circuit breaker are
@@ -79,7 +83,8 @@ def build_strategy(
         )
 
     if risk:
+        from tradersjoy.risk.limits import limits_for
         from tradersjoy.risk.manager import RiskManagedStrategy
 
-        return RiskManagedStrategy(tickers, inner)
+        return RiskManagedStrategy(tickers, inner, limits=limits_for(risk_profile))
     return inner

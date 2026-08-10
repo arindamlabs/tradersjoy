@@ -102,6 +102,7 @@ jobs:
             --strategy ml \
             --model data/models/ml.joblib \
             --risk \
+            --risk-profile caps \
             --rebalance weekly \
             --lookback-days 500 \
             $MODE

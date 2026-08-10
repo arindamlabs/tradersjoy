@@ -155,6 +155,7 @@ def run_daily(
     model: str | None = None,
     top_k: int = 5,
     risk: bool = True,
+    risk_profile: str = "full",
     rebalance: str = "weekly",
     short_window: int = 20,
     long_window: int = 50,
@@ -181,6 +182,8 @@ def run_daily(
         model: Path to a trained model, for the ``ml`` strategy.
         top_k: Names the ``ml`` strategy holds at once.
         risk: Wrap the strategy in the risk layer.
+        risk_profile: Which named bundle of limits the risk layer enforces;
+            see :data:`~tradersjoy.risk.limits.RISK_PROFILES`.
         rebalance: How often the ``ml`` strategy acts on its ranking; one of
             :data:`~tradersjoy.strategy.cadence.CADENCES`.
         short_window: Fast SMA window (``sma`` only).
@@ -267,6 +270,7 @@ def run_daily(
                 model_path=model,
                 top_k=top_k,
                 risk=risk,
+                risk_profile=risk_profile,
                 rebalance=rebalance,
             )
         except ValueError as exc:

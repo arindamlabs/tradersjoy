@@ -235,3 +235,34 @@ def test_stop_loss_still_fires_on_a_hold_day(monkeypatch) -> None:
                    history=history, portfolio=_Underwater())
     )
     assert [(o.ticker, o.side) for o in orders] == [("AAA", Side.SELL)]
+
+
+def test_buy_orders_are_emitted_in_rank_order(monkeypatch) -> None:
+    """Deterministic order, best score first.
+
+    Regression test. The buy loop used to iterate a ``set`` of tickers, so the
+    sequence depended on Python's per-process string hash seed. The broker fills
+    in the order given and rejects what it cannot fund, so that made backtests
+    unreproducible: the same configuration moved annual returns by percentage
+    points between runs, enough to swamp the effect sizes being measured.
+    """
+    from tradersjoy.strategy.base import BarContext
+    from tradersjoy.strategy.ml.strategy import MLStrategy
+
+    tickers = ["AAA", "BBB", "CCC", "DDD"]
+    history = _history(tickers, WEEK)
+    scores = {"AAA": 0.61, "BBB": 0.92, "CCC": 0.75, "DDD": 0.83}
+    monkeypatch.setattr(MLStrategy, "_scores", lambda self, ctx: scores)
+
+    strat = MLStrategy(tickers, _AlwaysBullishModel(), top_k=4, rebalance="weekly")
+    orders = strat.on_bar(
+        BarContext(
+            day=WEEK[0],
+            bars=history.bars_on(WEEK[0]),
+            history=history,
+            portfolio=_FlatAccount(),
+        )
+    )
+
+    bought = [o.ticker for o in orders if o.side is Side.BUY]
+    assert bought == ["BBB", "DDD", "CCC", "AAA"]  # descending score, every run

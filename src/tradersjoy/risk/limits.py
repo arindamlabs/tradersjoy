@@ -41,3 +41,50 @@ class RiskLimits:
     crash_drawdown: float | None = 0.15
     crash_window: int = 60
     benchmark: str = DEFAULT_BENCHMARK
+
+
+#: Named bundles of limits, so a deployment can name its risk posture rather
+#: than restate five numbers.
+#:
+#: The distinction is not cosmetic. Measured out-of-sample (2010-2026) on the
+#: ml/weekly strategy, the two *reactive* rails cost 6.4 points of CAGR and 0.14
+#: of Sharpe while making max drawdown 4.8 points **worse**, and they hurt in 12
+#: of 17 years including 2022, the bear market they exist for. The mechanism is
+#: understood: a strategy that already re-ranks and exits weak names every week
+#: does not need a second exit rule, and a cost-basis stop mostly sells transient
+#: weakness just before the rebound, while the circuit breaker blocks re-entry
+#: during exactly the stretches with the best forward returns.
+#:
+#: The *structural* caps, by contrast, are close to free (29.77% vs 29.81% CAGR,
+#: identical drawdown) because a top-5 equal-weight book sits just under them
+#: anyway. They cost nothing in the normal case and still bound the damage from
+#: a bug, a runaway position, or accidental leverage. That asymmetry is why they
+#: are separable.
+RISK_PROFILES: dict[str, RiskLimits] = {
+    # Everything on: both structural caps and both reactive rails.
+    "full": RiskLimits(),
+    # Structural caps only. Keeps the cheap insurance, drops the two rails that
+    # measurably hurt this strategy.
+    "caps": RiskLimits(stop_loss=None, crash_drawdown=None),
+}
+
+
+def limits_for(profile: str) -> RiskLimits:
+    """Return the named risk profile.
+
+    Args:
+        profile: A key of :data:`RISK_PROFILES`.
+
+    Returns:
+        The corresponding :class:`RiskLimits`.
+
+    Raises:
+        ValueError: If ``profile`` is not a known name.
+    """
+    try:
+        return RISK_PROFILES[profile]
+    except KeyError:
+        raise ValueError(
+            f"Unknown risk profile {profile!r}. "
+            f"Choose from: {', '.join(RISK_PROFILES)}."
+        ) from None

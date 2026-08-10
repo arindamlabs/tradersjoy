@@ -147,3 +147,67 @@ def test_within_limits_orders_pass_through_unchanged() -> None:
     )
     orders = risk.on_bar(_ctx(history, p))
     assert orders == [Order("AAPL", Side.BUY, 100, tag="entry")]
+
+
+# --------------------------------------------------------------------------
+# Named risk profiles
+# --------------------------------------------------------------------------
+
+
+def test_caps_profile_keeps_structural_limits_and_drops_reactive_rails() -> None:
+    """The two kinds of rail are separable, and that separation is the point.
+
+    Measured out-of-sample, the reactive rails (stop-loss, circuit breaker) cost
+    6.4pp of CAGR and made max drawdown *worse*, while the structural caps were
+    close to free. Keeping them in one all-or-nothing switch forced a bad trade.
+    """
+    from tradersjoy.risk.limits import limits_for
+
+    full, caps = limits_for("full"), limits_for("caps")
+
+    # Structural caps survive: these bound what one bug or blow-up can do.
+    assert caps.max_position_weight == full.max_position_weight
+    assert caps.max_gross_exposure == full.max_gross_exposure
+    # Reactive rails are off.
+    assert caps.stop_loss is None
+    assert caps.crash_drawdown is None
+    assert full.stop_loss is not None and full.crash_drawdown is not None
+
+
+def test_unknown_risk_profile_is_rejected() -> None:
+    import pytest
+
+    from tradersjoy.risk.limits import limits_for
+
+    with pytest.raises(ValueError, match="Unknown risk profile"):
+        limits_for("yolo")
+
+
+def test_caps_profile_does_not_stop_out_a_losing_position() -> None:
+    """The behavioural difference, not just the config difference."""
+    from tradersjoy.risk.limits import limits_for
+
+    # AAA drifts down; a holder whose cost basis is 100 is far past a 10% stop.
+    history = _history({"AAA": [100.0, 95.0, 90.0, 80.0], "SPY": [100.0] * 4})
+
+    class _Underwater:
+        equity = 100_000.0
+        cash = 0.0
+
+        def qty(self, ticker: str) -> float:
+            return 100.0 if ticker == "AAA" else 0.0
+
+        def avg_cost(self, ticker: str) -> float:
+            return 100.0 if ticker == "AAA" else 0.0
+
+    day = history.trading_days[-1]
+    ctx = BarContext(
+        day=day, bars=history.bars_on(day), history=history, portfolio=_Underwater()
+    )
+    tickers = ["AAA"]
+
+    full = RiskManagedStrategy(tickers, _Stub([]), limits=limits_for("full"))
+    caps = RiskManagedStrategy(tickers, _Stub([]), limits=limits_for("caps"))
+
+    assert [o.side for o in full.on_bar(ctx)] == [Side.SELL]  # stop fires
+    assert caps.on_bar(ctx) == []  # no reactive rail, position rides

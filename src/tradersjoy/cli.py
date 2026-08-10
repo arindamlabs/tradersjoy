@@ -128,6 +128,13 @@ def backtest(
         "fortnightly, monthly. Match this to the model's label horizon; "
         "'daily' churns ~70x/year for a ~6.7%/year slippage drag.",
     ),
+    risk_profile: str = typer.Option(
+        "full",
+        help="Which rails the risk layer enforces: 'full' (caps + stop-loss + "
+        "circuit breaker) or 'caps' (structural caps only). Measured "
+        "out-of-sample, the reactive rails cost 6.4pp of CAGR and made max "
+        "drawdown worse; the caps are close to free.",
+    ),
 ) -> None:
     """Run a strategy against stored historical bars and print its scorecard.
 
@@ -164,6 +171,7 @@ def backtest(
             top_k=top_k,
             risk=risk,
             rebalance=rebalance,
+            risk_profile=risk_profile,
         )
     except ValueError as exc:
         typer.echo(str(exc))
@@ -228,6 +236,13 @@ def trade(
         "fortnightly, monthly. Match this to the model's label horizon; "
         "'daily' churns ~70x/year for a ~6.7%/year slippage drag.",
     ),
+    risk_profile: str = typer.Option(
+        "full",
+        help="Which rails the risk layer enforces: 'full' (caps + stop-loss + "
+        "circuit breaker) or 'caps' (structural caps only). Measured "
+        "out-of-sample, the reactive rails cost 6.4pp of CAGR and made max "
+        "drawdown worse; the caps are close to free.",
+    ),
     journal: bool = typer.Option(
         True,
         "--journal/--no-journal",
@@ -270,6 +285,7 @@ def trade(
             top_k=top_k,
             risk=risk,
             rebalance=rebalance,
+            risk_profile=risk_profile,
         )
     except ValueError as exc:
         typer.echo(str(exc))
@@ -358,6 +374,13 @@ def autorun(
         "fortnightly, monthly. Match this to the model's label horizon; "
         "'daily' churns ~70x/year for a ~6.7%/year slippage drag.",
     ),
+    risk_profile: str = typer.Option(
+        "full",
+        help="Which rails the risk layer enforces: 'full' (caps + stop-loss + "
+        "circuit breaker) or 'caps' (structural caps only). Measured "
+        "out-of-sample, the reactive rails cost 6.4pp of CAGR and made max "
+        "drawdown worse; the caps are close to free.",
+    ),
     short_window: int = typer.Option(20, help="Fast SMA window (sma only)."),
     long_window: int = typer.Option(50, help="Slow SMA window (sma only)."),
     lookback_days: int = typer.Option(
@@ -394,6 +417,7 @@ def autorun(
         top_k=top_k,
         risk=risk,
         rebalance=rebalance,
+        risk_profile=risk_profile,
         short_window=short_window,
         long_window=long_window,
         lookback_days=lookback_days,
@@ -605,6 +629,16 @@ def evaluate(
         5.0, help="Adverse slippage per fill, in basis points."
     ),
     cash: float = typer.Option(100_000.0, help="Starting cash balance."),
+    risk: bool = typer.Option(
+        False,
+        "--risk/--no-risk",
+        help="Wrap the strategy in the risk layer, matching what the live path "
+        "runs. Off by default so the model is measured on its own.",
+    ),
+    risk_profile: str = typer.Option(
+        "full",
+        help="Which rails to enforce when --risk is set: 'full' or 'caps'.",
+    ),
 ) -> None:
     """Backtest a model out-of-sample and compare it to buy-and-hold.
 
@@ -623,6 +657,7 @@ def evaluate(
     from tradersjoy.data.ingest import load_universe
     from tradersjoy.data.store import Store
     from tradersjoy.ml.evaluate import evaluate_horizon
+    from tradersjoy.risk.limits import limits_for
     from tradersjoy.strategy.cadence import SESSIONS_PER_PERIOD
 
     if tickers:
@@ -663,6 +698,8 @@ def evaluate(
             top_k=top_k,
             slippage_bps=slippage_bps,
             cash=cash,
+            risk=risk,
+            limits=limits_for(risk_profile),
         )
     except ValueError as exc:
         typer.echo(str(exc))

@@ -132,6 +132,8 @@ def evaluate_horizon(
     slippage_bps: float = 5.0,
     cash: float = 100_000.0,
     threshold: float = 0.0,
+    risk: bool = False,
+    limits=None,
 ) -> HorizonResult:
     """Train, walk-forward, and backtest one (horizon, cadence) pair.
 
@@ -146,6 +148,13 @@ def evaluate_horizon(
         slippage_bps: Adverse slippage per fill.
         cash: Starting balance.
         threshold: Return cut the label must clear.
+        risk: Wrap the strategy in the risk layer, matching what the live path
+            actually runs. Off by default so the model can be measured on its
+            own; the rails are a separate intervention with their own effect on
+            the result, and conflating the two hides which one did what.
+        limits: Risk limits to enforce when ``risk`` is set. ``None`` uses the
+            same defaults the live path uses, so the default measurement is of
+            what actually ships.
 
     Returns:
         A :class:`HorizonResult` for this arm.
@@ -170,9 +179,13 @@ def evaluate_horizon(
     start = date(first_test_year, 1, 1)
     end = data.trading_days[-1]
 
-    strategy = WalkForwardMLStrategy(
+    strategy: Strategy = WalkForwardMLStrategy(
         tickers, wf.models, top_k=top_k, rebalance=rebalance
     )
+    if risk:
+        from tradersjoy.risk.manager import RiskManagedStrategy
+
+        strategy = RiskManagedStrategy(tickers, strategy, limits=limits)
     result = run_backtest(
         strategy, data, SimBroker(slippage_bps=slippage_bps), cash, start, end
     )

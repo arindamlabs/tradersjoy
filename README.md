@@ -277,6 +277,42 @@ winners, holding through drawdowns historically won. Protection has a price; the
 limits are knobs, not gospel, and the right setting depends on the universe and
 your tolerance for drawdown versus give-up in return.
 
+### Risk profiles: the rails are two different things
+
+That caveat got sharper once the rails were measured against the *actual*
+strategy rather than buy-and-hold. Out-of-sample, 2010-2026, ml/weekly:
+
+| Arm | CAGR | vs bench | Sharpe | maxDD |
+|---|---|---|---|---|
+| ml only | 29.81% | +1.41% | 1.14 | -42.28% |
+| ml + full rails | 23.45% | **-4.94%** | 1.00 | **-47.09%** |
+| ml + caps only | 29.77% | +1.38% | 1.14 | -42.28% |
+| buy & hold | 28.39% | | 1.04 | -54.92% |
+
+The reactive rails cost **6.4 points of CAGR** and 0.14 of Sharpe while making
+max drawdown **4.8 points worse**. They hurt in 12 of 17 years, including 2022,
+the bear market they exist for (-34% became -41%). The mechanism is
+understandable: a strategy that already re-ranks and exits weak names every week
+does not need a second exit rule, so a cost-basis stop mostly sells transient
+weakness just before the rebound, and the circuit breaker blocks re-entry during
+exactly the stretches with the best forward returns.
+
+The structural caps are a different animal. They are nearly free (29.77% vs
+29.81%, identical drawdown) because a top-5 equal-weight book sits just under
+them anyway, yet they still bound what a bug, a runaway position, or accidental
+leverage could do. Note also that a 10% cost-basis stop is poor insurance against
+the catastrophe people imagine it covers: a name that gaps down 40% exits at 40%
+down, not 10%. The position cap is the rail that actually limits that.
+
+So the two kinds are separable via `--risk-profile`:
+
+```bash
+uv run tradersjoy trade --risk --risk-profile caps   # structural caps only
+uv run tradersjoy trade --risk --risk-profile full   # everything (default)
+```
+
+The deployed configuration uses `caps`.
+
 ## Dashboard and the run journal
 
 Every live `trade` run is recorded to a local **run journal** (a table in the

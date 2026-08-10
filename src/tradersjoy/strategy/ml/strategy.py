@@ -139,7 +139,8 @@ class MLStrategy(Strategy):
 
         scores = self._scores(ctx)
         ranked = sorted(scores.items(), key=lambda kv: kv[1], reverse=True)
-        target = {t for t, s in ranked[: self.top_k] if s >= self.min_score}
+        picks = [(t, s) for t, s in ranked[: self.top_k] if s >= self.min_score]
+        target = {t for t, _ in picks}
 
         orders: list[Order] = []
         # Exit names we hold that are no longer in the target set.
@@ -149,9 +150,18 @@ class MLStrategy(Strategy):
                 orders.append(Order(ticker, Side.SELL, held, tag="ml-exit"))
 
         # Enter target names we do not already hold, equal-weight.
-        if target:
+        #
+        # Emitted in rank order, best score first. This is deliberate and not
+        # cosmetic: the broker fills orders in the order given and rejects any
+        # it cannot fund, so when cash is short the sequence decides which names
+        # actually get bought. Iterating the ``target`` set instead made that
+        # sequence depend on Python's per-process string hash seed, which left
+        # backtests unreproducible and moved annual returns by enough to swamp
+        # the effect sizes being measured. Highest conviction first is also the
+        # right tie-break on its own merits.
+        if picks:
             per_name = ctx.portfolio.equity * self.invest_fraction / self.top_k
-            for ticker in target:
+            for ticker, _score in picks:
                 if ctx.portfolio.qty(ticker) > 0:
                     continue  # already holding; let it ride
                 bar = ctx.bars.get(ticker)
