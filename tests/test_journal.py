@@ -23,6 +23,38 @@ def _journal(tmp_path) -> Journal:
     return j
 
 
+def test_journal_defaults_to_the_market_data_file(monkeypatch) -> None:
+    """With nothing configured, journal and bars share one file, as before."""
+    from tradersjoy.config import get_settings
+
+    monkeypatch.delenv("JOURNAL_DATABASE_URL", raising=False)
+    settings = get_settings()
+    assert settings.resolved_journal_url == settings.database_url
+
+
+def test_journal_can_live_in_its_own_file(monkeypatch, tmp_path) -> None:
+    """The split that makes ephemeral deployment possible.
+
+    On a CI runner the bar data is disposable (a fresh ingest rebuilds it) but
+    the journal is the track record. Pointing it at a separate file lets that
+    one small file be persisted without carrying ten megabytes of prices.
+    """
+    from tradersjoy.config import get_settings
+
+    url = f"sqlite:///{tmp_path / 'journal.sqlite'}"
+    monkeypatch.setenv("JOURNAL_DATABASE_URL", url)
+
+    settings = get_settings()
+    assert settings.resolved_journal_url == url
+    assert settings.database_url != url
+
+    j = Journal()  # no explicit URL: must pick up the override
+    j.init_db()
+    j.record_auto_run(ran_at=datetime(2026, 8, 7, 19, 0), status="no_orders")
+    assert j.database_url == url
+    assert [r.status for r in j.recent_auto_runs()] == ["no_orders"]
+
+
 def test_record_and_read_back_round_trips_orders(tmp_path) -> None:
     j = _journal(tmp_path)
     orders = [

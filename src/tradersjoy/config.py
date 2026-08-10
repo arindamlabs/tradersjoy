@@ -45,6 +45,15 @@ class Settings(BaseSettings):
             explicitly overridden, the system cannot place real-money orders.
         database_url: SQLAlchemy database URL (``DATABASE_URL``). Defaults to a
             SQLite file under ``<repo>/data/``.
+        journal_database_url: Where the run journal and automation heartbeat
+            live (``JOURNAL_DATABASE_URL``). Empty by default, which means "the
+            same file as ``database_url``" and keeps local behaviour unchanged.
+
+            Splitting them matters only for ephemeral deployments: on a CI
+            runner the bar data is disposable (a fresh ingest rebuilds it in
+            seconds) but the journal is the track record and must be carried
+            across runs. Pointing this at a small separate file lets that one
+            file be persisted without dragging ten megabytes of prices along.
     """
 
     model_config = SettingsConfigDict(
@@ -62,6 +71,16 @@ class Settings(BaseSettings):
         default=f"sqlite:///{PROJECT_ROOT / 'data' / 'tradersjoy.sqlite'}",
         alias="DATABASE_URL",
     )
+    journal_database_url: str = Field(default="", alias="JOURNAL_DATABASE_URL")
+
+    @property
+    def resolved_journal_url(self) -> str:
+        """The journal's database URL, falling back to the market-data store.
+
+        Keeping the fallback here (rather than as a field default) means the
+        two URLs cannot drift apart when only ``DATABASE_URL`` is overridden.
+        """
+        return self.journal_database_url or self.database_url
 
 
 def get_settings() -> Settings:

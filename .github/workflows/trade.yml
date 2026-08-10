@@ -1,0 +1,122 @@
+name: Daily decision
+
+# Why a CI runner is a reasonable home for this bot: the strategy decides after
+# the close and its orders queue for the next open, so a run at 18:00 ET and a
+# run at 23:00 ET place the identical trade. GitHub's scheduled triggers are
+# explicitly best-effort and often run late, which rules CI out for most trading
+# automation -- but "late" costs us nothing here. The session is resolved from
+# Alpaca's calendar rather than from the clock, so a delayed run still knows
+# exactly which day it is trading.
+
+on:
+  schedule:
+    # 23:00 UTC = 18:00 EST / 19:00 EDT. Comfortably after the 16:00 close in
+    # both halves of the year, so no daylight-saving arithmetic is needed.
+    # Weekdays only is a coarse filter; market holidays still land on Mon-Fri
+    # and are skipped by the run itself, from the exchange calendar.
+    - cron: "0 23 * * 1-5"
+  workflow_dispatch:
+    inputs:
+      execute:
+        description: "Actually place orders (leave off for a dry run)"
+        type: boolean
+        default: false
+      force:
+        description: "Bypass the already-traded-this-session guard"
+        type: boolean
+        default: false
+
+permissions:
+  # Needed to commit the journal back. Nothing else is written.
+  contents: write
+
+concurrency:
+  # Two runs must never decide against one account, nor race on the journal push.
+  group: tradersjoy-daily
+  cancel-in-progress: false
+
+env:
+  # ---------------------------------------------------------------------------
+  # DRY RUN BY DEFAULT for the scheduled run. Every guard runs, data refreshes,
+  # the decision is journalled -- and nothing is placed.
+  #
+  # Change "" to "--execute" when you are ready to let it trade unattended.
+  # Do not do that until the dry-run journal shows the turnover is survivable:
+  # a top-5 ranker that rotates the whole book daily loses to slippage no matter
+  # how good the model is.
+  # ---------------------------------------------------------------------------
+  SCHEDULED_EXECUTE: ""
+
+jobs:
+  decide:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          # Full history so the journal commit can rebase cleanly onto anything
+          # that landed while this run was deciding.
+          fetch-depth: 0
+
+      - name: Install uv
+        uses: astral-sh/setup-uv@v4
+        with:
+          enable-cache: true
+
+      - name: Set up Python
+        run: uv python install 3.12
+
+      - name: Install dependencies
+        run: uv sync --frozen
+
+      # The bar database is deliberately NOT carried between runs. A cold ingest
+      # of ~500 calendar days yields ~340 sessions per ticker, comfortably above
+      # the 201 the model's features need, and takes a few seconds. Only the
+      # journal is state worth persisting.
+      - name: Run the daily decision
+        id: decide
+        continue-on-error: true
+        env:
+          ALPACA_API_KEY: ${{ secrets.ALPACA_API_KEY }}
+          ALPACA_API_SECRET: ${{ secrets.ALPACA_API_SECRET }}
+          JOURNAL_DATABASE_URL: sqlite:///${{ github.workspace }}/state/journal.sqlite
+        run: |
+          if [ "${{ github.event_name }}" = "workflow_dispatch" ]; then
+            MODE=""
+            [ "${{ inputs.execute }}" = "true" ] && MODE="--execute"
+            [ "${{ inputs.force }}" = "true" ] && MODE="$MODE --force"
+          else
+            MODE="$SCHEDULED_EXECUTE"
+          fi
+          echo "mode: ${MODE:-dry run}"
+          uv run --frozen tradersjoy autorun \
+            --strategy ml \
+            --model data/models/ml.joblib \
+            --risk \
+            --lookback-days 500 \
+            $MODE
+
+      # Runs even when the decision failed: a refusal writes a heartbeat row too,
+      # and that row is exactly what makes the failure visible later.
+      - name: Persist the journal
+        if: always()
+        run: |
+          if [ -z "$(git status --porcelain state/)" ]; then
+            echo "journal unchanged; nothing to commit"
+            exit 0
+          fi
+          git config user.name  "tradersjoy-bot"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+          git add state/
+          # [skip ci] keeps this from triggering the test workflow. The commit
+          # still counts as repository activity, which is what stops GitHub
+          # auto-disabling this schedule after 60 idle days.
+          git commit -m "chore(journal): $(date -u +%Y-%m-%d) run [skip ci]"
+          git pull --rebase --autostash origin "${{ github.ref_name }}"
+          git push
+
+      - name: Surface a failed decision
+        if: steps.decide.outcome == 'failure'
+        run: |
+          echo "::error::The daily decision exited non-zero. It refused to trade;"
+          echo "::error::see the step log above for which guard stopped it."
+          exit 1

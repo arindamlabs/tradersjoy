@@ -3,6 +3,9 @@ name: CI
 on:
   push:
     branches: [main]
+    # The daily decision commits its journal here. That is data, not code, and
+    # re-running the suite for it would be pure noise.
+    paths-ignore: ["state/**"]
   pull_request:
 
 jobs:

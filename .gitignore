@@ -19,12 +19,24 @@ env/
 .env.local
 .env.*.local
 
-# Local data store at repo root (bars, models, SQLite) — never in git.
+# Local data store at repo root (bars, SQLite) — never in git.
 # Leading slash anchors this to the root so it doesn't match src/tradersjoy/data/.
-/data/
+/data/*
+
+# ...with one exception: the deployed model artifact. An ephemeral CI runner has
+# to get the model from somewhere, and versioning it next to the code that
+# serves it is better practice than fetching a mystery binary at run time.
+!/data/models/
+/data/models/*
+!/data/models/ml.joblib
+
 *.sqlite
 *.sqlite3
 *.db
+
+# The journal is the track record and IS committed (see .github/workflows/trade.yml).
+!/state/
+!/state/*.sqlite
 
 # Unattended-run logs (rotated locally; never in git)
 /logs/

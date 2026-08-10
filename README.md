@@ -252,12 +252,23 @@ of looking exactly like a strategy that had nothing to do. `tradersjoy status`
 and the dashboard's automation panel both read it, and the run exits non-zero
 only for real failures, so `systemctl status` stays meaningful.
 
-Scheduling is a **systemd user timer** firing weekdays an hour after the close.
-The shipped unit runs a **dry run**: it walks every guard, refreshes data,
-records the decision, and places nothing. Install it, watch a week, then switch
-in the `--execute` line. See [deploy/README.md](deploy/README.md) for the install
-steps, the WSL2 caveat (a user timer only fires while WSL is up), and what to
-look for before going live.
+Two schedulers are supported, both shipping as a **dry run** that walks every
+guard and places nothing:
+
+- **GitHub Actions** (recommended) - `.github/workflows/trade.yml`, weekdays at
+  23:00 UTC. Free and unlimited on a public repo, and it does not need your
+  machine to be awake. CI schedulers are normally too imprecise for trading, but
+  here the orders queue for the next open, so a late run places the identical
+  trade. The runner is ephemeral: bars are re-ingested from scratch each run
+  (~340 sessions in about eight seconds, against the 201 the model needs) while
+  the journal lives in its own small file that the workflow commits back. That
+  daily commit doubles as the keepalive that stops GitHub auto-disabling the
+  schedule after 60 idle days.
+- **systemd user timer** - `deploy/`, weekdays an hour after the close. Runs
+  locally; note that a user timer only fires while WSL is up.
+
+See [deploy/README.md](deploy/README.md) for setup, the trade-offs between the
+two, and what to check before switching on `--execute`.
 
 ## API documentation
 

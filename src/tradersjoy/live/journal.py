@@ -180,12 +180,13 @@ class Journal:
         """Bind the journal to a database, creating the SQLite directory if needed.
 
         Args:
-            database_url: SQLAlchemy URL. Defaults to the configured
-                ``DATABASE_URL`` (the same file the market-data store uses).
+            database_url: SQLAlchemy URL. Defaults to ``JOURNAL_DATABASE_URL``
+                if set, otherwise ``DATABASE_URL`` (the same file the
+                market-data store uses).
         """
         from tradersjoy.data.store import Store
 
-        self.database_url = database_url or get_settings().database_url
+        self.database_url = database_url or get_settings().resolved_journal_url
         Store._ensure_sqlite_dir(self.database_url)
         self.engine = create_engine(self.database_url)
 
