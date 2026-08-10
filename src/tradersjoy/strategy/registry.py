@@ -23,6 +23,7 @@ def build_strategy(
     model_path: str | None = None,
     top_k: int = 5,
     risk: bool = False,
+    rebalance: str = "weekly",
 ) -> Strategy:
     """Construct a strategy by name for the given universe.
 
@@ -43,6 +44,9 @@ def build_strategy(
             :class:`~tradersjoy.risk.manager.RiskManagedStrategy` so position
             sizing, the exposure cap, the stop-loss, and the circuit breaker are
             enforced on its orders.
+        rebalance: How often the ``ml`` strategy acts on its ranking; one of
+            :data:`~tradersjoy.strategy.cadence.CADENCES`. Ignored by the
+            baselines, which have no ranking to act on.
 
     Returns:
         The constructed :class:`~tradersjoy.strategy.base.Strategy`, optionally
@@ -66,7 +70,9 @@ def build_strategy(
         # Imported lazily so non-ML commands never pay for the ML stack.
         from tradersjoy.strategy.ml.strategy import MLStrategy
 
-        inner = MLStrategy.from_path(tickers, model_path, top_k=top_k)
+        inner = MLStrategy.from_path(
+            tickers, model_path, top_k=top_k, rebalance=rebalance
+        )
     else:
         raise ValueError(
             f"Unknown strategy {name!r}. Choose from: {', '.join(STRATEGY_NAMES)}."

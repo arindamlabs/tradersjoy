@@ -122,6 +122,12 @@ def backtest(
         help="Wrap the strategy in the risk layer (position sizing, exposure cap, "
         "stop-loss, circuit breaker).",
     ),
+    rebalance: str = typer.Option(
+        "weekly",
+        help="How often the ml strategy acts on its ranking: daily, weekly, "
+        "fortnightly, monthly. Match this to the model's label horizon; "
+        "'daily' churns ~70x/year for a ~6.7%/year slippage drag.",
+    ),
 ) -> None:
     """Run a strategy against stored historical bars and print its scorecard.
 
@@ -157,6 +163,7 @@ def backtest(
             model_path=model,
             top_k=top_k,
             risk=risk,
+            rebalance=rebalance,
         )
     except ValueError as exc:
         typer.echo(str(exc))
@@ -215,6 +222,12 @@ def trade(
         help="Wrap the strategy in the risk layer (position sizing, exposure cap, "
         "stop-loss, circuit breaker).",
     ),
+    rebalance: str = typer.Option(
+        "weekly",
+        help="How often the ml strategy acts on its ranking: daily, weekly, "
+        "fortnightly, monthly. Match this to the model's label horizon; "
+        "'daily' churns ~70x/year for a ~6.7%/year slippage drag.",
+    ),
     journal: bool = typer.Option(
         True,
         "--journal/--no-journal",
@@ -256,6 +269,7 @@ def trade(
             model_path=model,
             top_k=top_k,
             risk=risk,
+            rebalance=rebalance,
         )
     except ValueError as exc:
         typer.echo(str(exc))
@@ -338,6 +352,12 @@ def autorun(
     risk: bool = typer.Option(
         True, "--risk/--no-risk", help="Wrap the strategy in the risk layer."
     ),
+    rebalance: str = typer.Option(
+        "weekly",
+        help="How often the ml strategy acts on its ranking: daily, weekly, "
+        "fortnightly, monthly. Match this to the model's label horizon; "
+        "'daily' churns ~70x/year for a ~6.7%/year slippage drag.",
+    ),
     short_window: int = typer.Option(20, help="Fast SMA window (sma only)."),
     long_window: int = typer.Option(50, help="Slow SMA window (sma only)."),
     lookback_days: int = typer.Option(
@@ -373,6 +393,7 @@ def autorun(
         model=model,
         top_k=top_k,
         risk=risk,
+        rebalance=rebalance,
         short_window=short_window,
         long_window=long_window,
         lookback_days=lookback_days,

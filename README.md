@@ -156,6 +156,36 @@ The walk-forward report is the trustworthy track record. Running
 `backtest --strategy ml` over the model's own training window is *in-sample* and
 flatters it; the CLI prints a warning to that effect.
 
+### Rebalance cadence
+
+How often the ranking is *acted on* is a separate decision from how good the
+ranking is, and it turned out to matter more. Measured over 2016-2026, acting on
+it every session replaced 1.4 of 5 positions a day: roughly **70x annual
+turnover, a 6.7%/year drag** at 5 bps a side. Half of all positions lasted
+exactly one session, and 65% of sells were re-bought within five days, while the
+model's label predicts *five sessions* ahead. The strategy was reliably selling
+before the move it had predicted had time to happen.
+
+`--rebalance` ties the trading cadence to that horizon:
+
+| Cadence | Sessions | Turnover | Cost drag/yr | Avg hold |
+|---|---|---|---|---|
+| `daily` | 1 | 70x | 6.7% | 2.6 sessions |
+| **`weekly`** (default) | ~5 | 20x | **2.0%** | 8.7 sessions |
+| `fortnightly` | ~10 | 11x | 1.1% | 15.4 sessions |
+| `monthly` | ~21 | 6x | 0.6% | 30.6 sessions |
+
+A hysteresis buffer (hold until a name falls out of the top 7, say) was tried
+first and barely helped: 6.7% to 5.6% even with a buffer of 5. Names are not
+hovering near the cutoff, they make large rank moves, so only cadence fixes it.
+
+Like the risk rails, the cadence is **stateless**: a rebalance day is the first
+trading session of a calendar period, a pure function of the date. Counting
+"sessions since last rebalance" would pass a backtest and then rebalance every
+day live, because `run_once` starts fresh each session with no memory of previous
+runs. Holidays need no special-casing either: if Monday is shut, the week's first
+session is Tuesday.
+
 ## Risk management
 
 Any strategy can be wrapped in a risk layer that sits between it and the broker:

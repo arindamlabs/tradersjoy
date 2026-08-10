@@ -155,6 +155,7 @@ def run_daily(
     model: str | None = None,
     top_k: int = 5,
     risk: bool = True,
+    rebalance: str = "weekly",
     short_window: int = 20,
     long_window: int = 50,
     lookback_days: int = 400,
@@ -180,6 +181,8 @@ def run_daily(
         model: Path to a trained model, for the ``ml`` strategy.
         top_k: Names the ``ml`` strategy holds at once.
         risk: Wrap the strategy in the risk layer.
+        rebalance: How often the ``ml`` strategy acts on its ranking; one of
+            :data:`~tradersjoy.strategy.cadence.CADENCES`.
         short_window: Fast SMA window (``sma`` only).
         long_window: Slow SMA window (``sma`` only).
         lookback_days: Days of recent bars to refresh before deciding.
@@ -264,6 +267,7 @@ def run_daily(
                 model_path=model,
                 top_k=top_k,
                 risk=risk,
+                rebalance=rebalance,
             )
         except ValueError as exc:
             return finish("failed", f"could not build strategy: {exc}", session=session)

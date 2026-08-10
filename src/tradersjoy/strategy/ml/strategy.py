@@ -20,6 +20,7 @@ from tradersjoy.ml.dataset import DEFAULT_BENCHMARK
 from tradersjoy.ml.features import benchmark_returns, features_from_bars
 from tradersjoy.ml.model import GBMModel
 from tradersjoy.strategy.base import BarContext, Strategy
+from tradersjoy.strategy.cadence import CADENCES, is_rebalance_day
 
 
 class MLStrategy(Strategy):
@@ -33,6 +34,8 @@ class MLStrategy(Strategy):
             leaving a buffer against next-open slippage.
         min_score: Only buy a name whose probability clears this floor, so the
             strategy can sit in cash when the model likes nothing.
+        rebalance: How often the ranking is acted on. Should match the model's
+            label horizon; see :mod:`tradersjoy.strategy.cadence`.
     """
 
     def __init__(
@@ -43,6 +46,7 @@ class MLStrategy(Strategy):
         invest_fraction: float = 0.95,
         min_score: float = 0.5,
         benchmark: str = DEFAULT_BENCHMARK,
+        rebalance: str = "weekly",
     ) -> None:
         """Configure the strategy around a pre-fitted model.
 
@@ -54,13 +58,28 @@ class MLStrategy(Strategy):
             min_score: Minimum model probability required to buy a name.
             benchmark: Market symbol for the relative features; must match what
                 the model was trained with (default ``SPY``).
+            rebalance: One of :data:`~tradersjoy.strategy.cadence.CADENCES`.
+                Defaults to ``"weekly"``, the roughly five sessions the default
+                label predicts over. Acting on the ranking every session instead
+                churns the book about 70x a year for a 6.7%/year slippage drag,
+                and sells names before the move they were picked for has had
+                time to happen.
+
+        Raises:
+            ValueError: If ``rebalance`` is not a recognised cadence.
         """
+        if rebalance not in CADENCES:
+            raise ValueError(
+                f"Unknown rebalance cadence {rebalance!r}. "
+                f"Choose from: {', '.join(CADENCES)}."
+            )
         self.tickers = tickers
         self.model = model
         self.top_k = top_k
         self.invest_fraction = invest_fraction
         self.min_score = min_score
         self.benchmark = benchmark
+        self.rebalance = rebalance
 
     @classmethod
     def from_path(cls, tickers: list[str], model_path: str, **kwargs: object) -> MLStrategy:
@@ -78,7 +97,10 @@ class MLStrategy(Strategy):
 
     @property
     def name(self) -> str:
-        return f"ml(top{self.top_k})"
+        # The cadence is part of the name so every journal row and backtest
+        # scorecard records which one produced it. Two runs of "ml(top5)" that
+        # rebalanced differently are not the same strategy.
+        return f"ml(top{self.top_k},{self.rebalance})"
 
     def _scores(self, ctx: BarContext) -> dict[str, float]:
         """Score every ticker that trades today and has enough history."""
@@ -104,7 +126,17 @@ class MLStrategy(Strategy):
         return dict(zip(candidates, probs, strict=True))
 
     def on_bar(self, ctx: BarContext) -> list[Order]:
-        """Rebalance toward the top-``k`` highest-scoring names above ``min_score``."""
+        """Rebalance toward the top-``k`` highest-scoring names above ``min_score``.
+
+        On sessions that are not a rebalance day the strategy proposes nothing
+        and the book is left alone. Note this suppresses only the *strategy's*
+        churn: a risk layer wrapping it still evaluates its rails every session,
+        so a stop-loss fires on the day it is breached rather than waiting for
+        the next rebalance.
+        """
+        if not is_rebalance_day(ctx.day, ctx.history.trading_days, self.rebalance):
+            return []
+
         scores = self._scores(ctx)
         ranked = sorted(scores.items(), key=lambda kv: kv[1], reverse=True)
         target = {t for t, s in ranked[: self.top_k] if s >= self.min_score}
