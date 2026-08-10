@@ -65,6 +65,56 @@ class RunRow(JournalBase):
     orders_json: Mapped[str] = mapped_column(String)
 
 
+class AutoRunRow(JournalBase):
+    """ORM row for one firing of the unattended scheduler.
+
+    Deliberately separate from :class:`RunRow`. A journal row answers "what did
+    the strategy decide?" and only exists when a decision happened; this table
+    answers "did the scheduler fire at all, and what came of it?" and gets a row
+    *every* time, including the days the run refused to trade. Without that
+    second question the most dangerous failure is invisible: a scheduler that
+    silently stopped firing looks exactly like a strategy that had nothing to do.
+    """
+
+    __tablename__ = "auto_runs"
+
+    id: Mapped[int] = mapped_column(Integer, primary_key=True, autoincrement=True)
+    ran_at: Mapped[datetime] = mapped_column(DateTime)
+    status: Mapped[str] = mapped_column(String)
+    reason: Mapped[str] = mapped_column(String)
+    decision_day: Mapped[date | None] = mapped_column(Date, nullable=True)
+    executed: Mapped[bool] = mapped_column(Boolean)
+    n_orders: Mapped[int] = mapped_column(Integer)
+
+
+@dataclass(frozen=True, slots=True)
+class AutoRunRecord:
+    """One recorded scheduler firing, read back for the dashboard and CLI.
+
+    Attributes:
+        ran_at: Wall-clock time the scheduler fired.
+        status: Outcome bucket (``traded``, ``dry_run``, ``no_orders``,
+            ``skipped``, ``failed``).
+        reason: Human-readable explanation, especially for skips and failures.
+        decision_day: Session decided on, or ``None`` if the run never got that
+            far (e.g. it was a weekend).
+        executed: Whether orders were actually placed.
+        n_orders: How many orders the strategy produced.
+    """
+
+    ran_at: datetime
+    status: str
+    reason: str
+    decision_day: date | None
+    executed: bool
+    n_orders: int
+
+    @property
+    def ok(self) -> bool:
+        """Whether this firing reached a decision rather than bailing out."""
+        return self.status in {"traded", "dry_run", "no_orders"}
+
+
 @dataclass(frozen=True, slots=True)
 class RunEntry:
     """A recorded run read back from the journal, for reporting.
@@ -201,6 +251,71 @@ class Journal:
             executed=plan.executed,
             orders=plan.orders,
         )
+
+    def record_auto_run(
+        self,
+        *,
+        ran_at: datetime,
+        status: str,
+        reason: str = "",
+        decision_day: date | None = None,
+        executed: bool = False,
+        n_orders: int = 0,
+    ) -> None:
+        """Append one scheduler firing to the automation heartbeat table.
+
+        Called on every path through the unattended runner, including the ones
+        that decline to trade, so a gap in this table means the scheduler itself
+        stopped rather than the strategy having a quiet week.
+
+        Args:
+            ran_at: Wall-clock time of the firing.
+            status: ``traded``, ``no_orders``, ``skipped``, or ``failed``.
+            reason: Why, for skips and failures.
+            decision_day: Session decided on, if the run got that far.
+            executed: Whether orders were actually placed.
+            n_orders: Number of orders the strategy produced.
+        """
+        row = AutoRunRow(
+            ran_at=ran_at,
+            status=status,
+            reason=reason,
+            decision_day=decision_day,
+            executed=executed,
+            n_orders=n_orders,
+        )
+        with Session(self.engine) as session:
+            session.add(row)
+            session.commit()
+
+    def recent_auto_runs(self, limit: int = 50) -> list[AutoRunRecord]:
+        """Return the most recent scheduler firings, newest first.
+
+        Args:
+            limit: Maximum number of firings to return.
+
+        Returns:
+            Up to ``limit`` :class:`AutoRunRecord` records, newest first.
+        """
+        stmt = select(AutoRunRow).order_by(AutoRunRow.ran_at.desc()).limit(limit)
+        with Session(self.engine) as session:
+            rows = list(session.scalars(stmt))
+        return [
+            AutoRunRecord(
+                ran_at=r.ran_at,
+                status=r.status,
+                reason=r.reason,
+                decision_day=r.decision_day,
+                executed=r.executed,
+                n_orders=r.n_orders,
+            )
+            for r in rows
+        ]
+
+    def last_auto_run(self) -> AutoRunRecord | None:
+        """Return the most recent scheduler firing, or ``None`` if never run."""
+        runs = self.recent_auto_runs(limit=1)
+        return runs[0] if runs else None
 
     def recent(self, limit: int = 200) -> list[RunEntry]:
         """Return the most recent runs, newest first.

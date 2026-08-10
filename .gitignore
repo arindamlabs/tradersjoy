@@ -26,6 +26,9 @@ env/
 *.sqlite3
 *.db
 
+# Unattended-run logs (rotated locally; never in git)
+/logs/
+
 # MLflow
 mlruns/
 mlartifacts/

@@ -6,7 +6,7 @@ An automated paper-trading system: daily-swing strategies on US equities,
 executed against the Alpaca paper-trading API. Built to be a serious learning
 project for quant infrastructure and ML-for-trading, not a get-rich-quick bot.
 
-**Status: Phase 6** (run journal + dashboard). The CLI works, the package
+**Status: Phase 6b** (scheduled automation). The CLI works, the package
 installs, CI is green. Daily bars for a 20-ticker watchlist back to 2005 ingest
 into a local SQLite store via yfinance; an event-driven backtester replays them
 through baseline strategies with realistic, no-look-ahead fills; the same
@@ -14,9 +14,11 @@ strategies can drive live orders against the Alpaca paper account (dry-run by
 default); a gradient-boosted-tree model can be trained and scored honestly with
 walk-forward validation; any strategy can be wrapped in a stateless risk layer
 (position sizing, exposure cap, stop-loss, circuit breaker) that behaves
-identically in backtest and live; and every live run is recorded to a local
-journal that a read-only Streamlit dashboard reads back as an equity curve and a
-decision log.
+identically in backtest and live; every live run is recorded to a local journal
+that a read-only Streamlit dashboard reads back as an equity curve and a decision
+log; and a guarded `autorun` command runs the whole thing unattended on a systemd
+timer, refusing to trade on stale data and leaving a heartbeat so a scheduler
+that dies is visible rather than assumed healthy.
 
 ## Setup
 
@@ -58,6 +60,12 @@ uv run tradersjoy trade --strategy ml --model data/models/ml.joblib
 # install the dashboard extra, then launch the read-only web dashboard
 uv sync --extra dashboard
 uv run tradersjoy dashboard      # opens http://localhost:8501
+
+# one guarded, unattended decision cycle (what the systemd timer calls)
+uv run tradersjoy autorun --strategy ml --model data/models/ml.joblib --risk
+
+# is the scheduler actually still firing?
+uv run tradersjoy status
 ```
 
 ## Backtesting
@@ -215,11 +223,41 @@ command alone. Early on the equity curve is a single point and fills in one
 session at a time as the bot runs each day, which is honest rather than a
 back-filled illusion of history.
 
-Automation (running `trade` on a daily schedule, unattended) is the other half
-of this phase and is deliberately **not wired up yet**: it places orders while
-no one is watching, which is a bigger step to take right after the first manual
-order. The dashboard comes first so there is something to watch; scheduled
-execution is a later, deliberate addition.
+## Unattended operation
+
+A strategy with a 5-day horizon that nobody runs for two months is not that
+strategy any more; it is one stale snapshot held by accident. `autorun` is the
+scheduled counterpart to `trade`, hardened for running with nobody watching.
+
+```bash
+uv run tradersjoy autorun --strategy ml --model data/models/ml.joblib --risk
+uv run tradersjoy status         # is the scheduler actually still firing?
+```
+
+`trade` assumes a human reads the output and notices when something looks wrong.
+Automation removes that human, so `autorun` makes those checks explicit and
+**refuses to trade** rather than trading on bad state:
+
+| Guard | Refuses when | Why it matters |
+|---|---|---|
+| Lock file | another run is in flight | two traders on one account is never right |
+| Halt file | `data/HALT` exists | pause without touching timers or credentials |
+| Market clock | a session is in progress | today's bar is not final until the close |
+| Duplicate | this session already traded | a retry must not re-decide and churn |
+| Freshness | stored data misses that session | a lagging feed would re-trade a stale opinion |
+
+Every firing writes a **heartbeat** row, including the refusals. That is the
+point of the table: a scheduler that quietly stopped leaves a visible gap instead
+of looking exactly like a strategy that had nothing to do. `tradersjoy status`
+and the dashboard's automation panel both read it, and the run exits non-zero
+only for real failures, so `systemctl status` stays meaningful.
+
+Scheduling is a **systemd user timer** firing weekdays an hour after the close.
+The shipped unit runs a **dry run**: it walks every guard, refreshes data,
+records the decision, and places nothing. Install it, watch a week, then switch
+in the `--execute` line. See [deploy/README.md](deploy/README.md) for the install
+steps, the WSL2 caveat (a user timer only fires while WSL is up), and what to
+look for before going live.
 
 ## API documentation
 
@@ -245,7 +283,7 @@ uv run pdoc -d google tradersjoy -o docs/api
 | 4 | ML strategy with walk-forward validation | done |
 | 5 | Risk management (position sizing, stops, circuit-breaker) | done |
 | 6 | Run journal + Streamlit dashboard | done |
-| 6b | Scheduled automation (unattended daily run) | not started |
+| 6b | Scheduled automation (unattended daily run) | done |
 | 7 | Disciplined retraining loop | not started |
 
 ## Design principles

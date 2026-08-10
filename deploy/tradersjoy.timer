@@ -1,0 +1,22 @@
+[Unit]
+Description=Fire the tradersjoy daily decision after the US close
+Documentation=https://github.com/arindamlabs/tradersjoy
+
+[Timer]
+# 14:00 local (America/Vancouver) = 17:00 US/Eastern, an hour after the 16:00
+# close. Both zones observe DST on the same dates, so this stays an hour past
+# the bell all year without adjustment. The hour of slack lets the daily bar
+# settle at the data provider before we ask for it.
+#
+# Weekdays only is a coarse filter, not a correctness guarantee: market holidays
+# still land on Mon-Fri. The run itself checks Alpaca's calendar and skips.
+OnCalendar=Mon-Fri 14:00
+AccuracySec=1min
+
+# If the machine was asleep or WSL was shut down at 14:00, run at the next
+# opportunity rather than silently skipping the day. The autorun guards decide
+# whether that late firing is still safe to act on.
+Persistent=true
+
+[Install]
+WantedBy=timers.target

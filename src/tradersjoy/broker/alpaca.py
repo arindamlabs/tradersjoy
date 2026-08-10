@@ -21,7 +21,9 @@ Three deliberate guardrails keep this honest and safe:
 from __future__ import annotations
 
 from dataclasses import dataclass
+from datetime import datetime, timedelta
 from typing import TYPE_CHECKING
+from zoneinfo import ZoneInfo
 
 from alpaca.trading.client import TradingClient
 from alpaca.trading.enums import OrderSide, TimeInForce
@@ -32,8 +34,28 @@ from tradersjoy.core.types import Side
 
 if TYPE_CHECKING:
     from collections.abc import Sequence
+    from datetime import date
 
     from tradersjoy.core.types import Order
+
+#: The exchange's own timezone. US market hours (and the DST shifts that move
+#: them) are defined in New York time, so every session boundary is resolved
+#: here rather than in whatever timezone the machine running the bot happens to
+#: sit in.
+MARKET_TZ = ZoneInfo("America/New_York")
+
+
+def _session_close(session) -> datetime:  # noqa: ANN001 - Alpaca's Calendar model
+    """Return an exchange-local, timezone-aware close instant for a calendar row.
+
+    Alpaca reports session open/close as naive datetimes in exchange time; this
+    attaches that timezone so the value can be compared against ``now`` safely.
+    """
+    close = session.close
+    if not isinstance(close, datetime):
+        # Older payloads carry a bare time; pair it with the session's date.
+        close = datetime.combine(session.date, close)
+    return close.replace(tzinfo=MARKET_TZ) if close.tzinfo is None else close
 
 
 @dataclass(frozen=True, slots=True)
@@ -155,6 +177,68 @@ class AlpacaBroker:
         return AlpacaAccount(
             float(acct.equity), float(acct.cash), positions, avg_costs
         )
+
+    def is_trading_day(self, day: date) -> bool:
+        """Return whether ``day`` is a regular US equity session.
+
+        Asks Alpaca's own calendar rather than guessing from the weekday, so
+        market holidays (which no amount of ``Mon-Fri`` cron syntax can predict)
+        are excluded correctly.
+
+        Args:
+            day: Calendar date to test.
+
+        Returns:
+            True if the exchange holds a session on ``day``.
+        """
+        from alpaca.trading.requests import GetCalendarRequest
+
+        sessions = self._client.get_calendar(GetCalendarRequest(start=day, end=day))
+        return any(s.date == day for s in sessions)
+
+    def last_completed_session(self, now: datetime | None = None) -> date | None:
+        """Return the most recent session whose closing bell has already rung.
+
+        This is the session a strategy may legitimately decide on. Deriving it
+        from the exchange calendar rather than from "today" gets every awkward
+        case right for free: on a Saturday it is Friday, on a holiday it is the
+        previous business day, and before today's close it is yesterday. The
+        unattended runner then insists the stored data actually reaches this
+        day before it will trade.
+
+        Args:
+            now: Instant to evaluate against, for testing. Defaults to the
+                current time in the exchange's timezone.
+
+        Returns:
+            The date of the latest closed session, or ``None`` if the calendar
+            returned nothing for the lookback window.
+        """
+        from alpaca.trading.requests import GetCalendarRequest
+
+        moment = now or datetime.now(MARKET_TZ)
+        if moment.tzinfo is None:
+            moment = moment.replace(tzinfo=MARKET_TZ)
+        today = moment.astimezone(MARKET_TZ).date()
+
+        # Ten calendar days comfortably spans any weekend-plus-holiday stretch.
+        sessions = self._client.get_calendar(
+            GetCalendarRequest(start=today - timedelta(days=10), end=today)
+        )
+        closed = [s.date for s in sessions if _session_close(s) <= moment]
+        return max(closed) if closed else None
+
+    def is_market_open(self) -> bool:
+        """Return whether the exchange is trading *right now*.
+
+        The unattended runner uses this to refuse to decide while a session is
+        still in progress: today's bar is not final until the close, and a
+        strategy fed a half-formed bar is deciding on data that will change.
+
+        Returns:
+            True if the market is currently open.
+        """
+        return bool(self._client.get_clock().is_open)
 
     def _open_orders(self) -> list:
         """Return Alpaca's currently open orders (queued/partially filled)."""

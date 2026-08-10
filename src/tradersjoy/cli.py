@@ -323,6 +323,124 @@ def trade(
 
 
 @app.command()
+def autorun(
+    strategy: str = typer.Option("ml", help="Strategy to run: buyhold, sma, or ml."),
+    tickers: str | None = typer.Option(
+        None, help="Comma-separated tickers. Defaults to the universe watchlist."
+    ),
+    execute: bool = typer.Option(
+        False,
+        "--execute",
+        help="Actually place orders. Omit to run every guard but place nothing.",
+    ),
+    model: str | None = typer.Option(
+        None, "--model", help="Path to a trained model (ml strategy only)."
+    ),
+    top_k: int = typer.Option(5, help="Names the ml strategy holds at once (ml only)."),
+    risk: bool = typer.Option(
+        True, "--risk/--no-risk", help="Wrap the strategy in the risk layer."
+    ),
+    short_window: int = typer.Option(20, help="Fast SMA window (sma only)."),
+    long_window: int = typer.Option(50, help="Slow SMA window (sma only)."),
+    lookback_days: int = typer.Option(
+        400, help="Days of recent data to refresh before deciding."
+    ),
+    force: bool = typer.Option(
+        False, "--force", help="Bypass the already-traded-this-session guard."
+    ),
+) -> None:
+    """Run one *unattended* decision cycle, guarded for use on a schedule.
+
+    This is what the systemd timer calls. Unlike ``trade``, which assumes a human
+    is reading the output, ``autorun`` refuses to act on bad state: it skips
+    while the market is open, refuses to trade on stale or missing data, will not
+    fire twice for the same session, honours a halt file, and writes a heartbeat
+    row on every path so a scheduler that quietly dies is visible rather than
+    assumed healthy.
+
+    Exits 0 when it traded or legitimately skipped, and 1 when something went
+    wrong (stale data, a broken feed, an overlapping run), so ``systemctl status``
+    reflects real failures only.
+    """
+    from tradersjoy.live.autorun import configure_logging, run_daily
+
+    configure_logging()
+    tick_list = (
+        [t.strip().upper() for t in tickers.split(",") if t.strip()] if tickers else None
+    )
+    result = run_daily(
+        strategy=strategy,
+        tickers=tick_list,
+        execute=execute,
+        model=model,
+        top_k=top_k,
+        risk=risk,
+        short_window=short_window,
+        long_window=long_window,
+        lookback_days=lookback_days,
+        force=force,
+    )
+    raise typer.Exit(code=result.exit_code)
+
+
+@app.command()
+def status() -> None:
+    """Report whether the unattended scheduler is actually running.
+
+    The whole point of the heartbeat table: answer "is this thing on?" without
+    trusting that no news is good news. Prints the last few firings and warns
+    when the most recent one is older than a trading day should allow.
+    """
+    from datetime import datetime, timedelta
+
+    from tradersjoy.live.journal import Journal
+
+    j = Journal()
+    j.init_db()
+    runs = j.recent_auto_runs(limit=10)
+    if not runs:
+        typer.echo(
+            "No unattended runs recorded yet.\n"
+            "The scheduler has never fired (or has only ever been run manually "
+            "via `trade`). See `tradersjoy autorun --help`."
+        )
+        return
+
+    last = runs[0]
+    age = datetime.now() - last.ran_at
+    typer.echo(f"Last run:  {last.ran_at:%Y-%m-%d %H:%M}  ({_ago(age)} ago)")
+    typer.echo(f"Status:    {last.status}  {last.reason}")
+    if last.decision_day:
+        typer.echo(f"Session:   {last.decision_day.isoformat()}")
+
+    if age > timedelta(days=4):
+        typer.echo(
+            f"\nWARNING: nothing has fired in {_ago(age)}. The timer is probably "
+            "not running. Check:  systemctl --user status tradersjoy.timer"
+        )
+    elif not last.ok:
+        typer.echo("\nWARNING: the most recent run did not reach a decision.")
+
+    typer.echo("\nRecent firings:")
+    for r in runs:
+        flag = " " if r.ok else "!"
+        typer.echo(f" {flag} {r.ran_at:%Y-%m-%d %H:%M}  {r.status:9s} {r.reason}")
+
+
+def _ago(delta) -> str:  # noqa: ANN001 - timedelta
+    """Render a timedelta as a short human duration like ``3d 4h``."""
+    total = int(delta.total_seconds())
+    days, rem = divmod(total, 86_400)
+    hours, rem = divmod(rem, 3_600)
+    minutes = rem // 60
+    if days:
+        return f"{days}d {hours}h"
+    if hours:
+        return f"{hours}h {minutes}m"
+    return f"{minutes}m"
+
+
+@app.command()
 def train(
     tickers: str | None = typer.Option(
         None, help="Comma-separated tickers. Defaults to the universe watchlist."

@@ -87,6 +87,60 @@ def _render_account() -> None:
         st.caption("No pending orders.")
 
 
+def _render_automation() -> None:
+    """Render the scheduler heartbeat: is this thing actually still running?
+
+    Deliberately the first panel after the account. An equity curve that stopped
+    moving looks the same whether the strategy is flat or the timer died in June;
+    this panel is the only thing on the page that tells them apart.
+    """
+    from datetime import datetime, timedelta
+
+    journal = Journal()
+    journal.init_db()
+    runs = journal.recent_auto_runs(limit=20)
+
+    st.subheader("Automation")
+    if not runs:
+        st.warning(
+            "The scheduler has never fired. Runs so far have all been manual. "
+            "See deploy/README.md to install the timer."
+        )
+        return
+
+    last = runs[0]
+    age = datetime.now() - last.ran_at
+    c1, c2 = st.columns(2)
+    c1.metric("Last automated run", f"{last.ran_at:%Y-%m-%d %H:%M}")
+    c2.metric("Status", last.status)
+
+    if age > timedelta(days=4):
+        st.error(
+            f"Nothing has fired in {age.days} days. The timer is probably not "
+            "running: check `systemctl --user status tradersjoy.timer`."
+        )
+    elif not last.ok:
+        st.warning(f"Last run did not reach a decision: {last.reason}")
+
+    st.dataframe(
+        pd.DataFrame(
+            [
+                {
+                    "ran_at": r.ran_at,
+                    "status": r.status,
+                    "session": r.decision_day,
+                    "orders": r.n_orders,
+                    "executed": r.executed,
+                    "reason": r.reason,
+                }
+                for r in runs
+            ]
+        ),
+        hide_index=True,
+        use_container_width=True,
+    )
+
+
 def _render_journal() -> None:
     """Render the equity curve and decision log from the local run journal."""
     journal = Journal()
@@ -137,5 +191,7 @@ def _render_journal() -> None:
 
 
 _render_account()
+st.divider()
+_render_automation()
 st.divider()
 _render_journal()

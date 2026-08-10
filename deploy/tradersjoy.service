@@ -1,0 +1,35 @@
+[Unit]
+Description=tradersjoy unattended daily decision
+Documentation=https://github.com/arindamlabs/tradersjoy
+# Do not even start if the network is not up; the run needs yfinance and Alpaca.
+After=network-online.target
+Wants=network-online.target
+
+[Service]
+Type=oneshot
+WorkingDirectory=%h/projects/tradersjoy
+
+# Dry run by default. `autorun` still walks every guard, refreshes data, records
+# the decision, and writes a heartbeat -- it just places nothing. Watch a week of
+# these, confirm the decisions and the turnover look sane, and only then add
+# --execute to the line below.
+ExecStart=%h/.local/bin/uv run --frozen tradersjoy autorun \
+    --strategy ml \
+    --model data/models/ml.joblib \
+    --risk
+
+# The live version. Swap the two ExecStart blocks (comment the one above,
+# uncomment this) when you are ready to let it trade unattended.
+# ExecStart=%h/.local/bin/uv run --frozen tradersjoy autorun \
+#     --strategy ml \
+#     --model data/models/ml.joblib \
+#     --risk \
+#     --execute
+
+# A failed run must not retry blindly: the guards already decided today is not
+# safe to trade, and hammering the same broken state would only add noise.
+Restart=no
+TimeoutStartSec=900
+
+[Install]
+WantedBy=default.target
