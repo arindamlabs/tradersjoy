@@ -306,8 +306,12 @@ def run_daily(
         # a data reason still reports the data reason, which is the actionable
         # one. The run still decides and journals below; it simply does not
         # execute, so the record shows what it wanted while suspended.
+        # Evaluated even on a dry run, which places nothing either way. A dry run
+        # is how you ask "what would the bot do today?", so it must give the same
+        # answer the scheduled run would: reporting "would have placed 5 orders"
+        # when the live run would have withheld them is a misleading rehearsal.
         floored = False
-        if min_equity is not None and execute:
+        if min_equity is not None:
             try:
                 equity = broker.get_account().equity
             except Exception as exc:  # noqa: BLE001 - cannot verify, so do not trade

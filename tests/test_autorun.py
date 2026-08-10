@@ -406,3 +406,21 @@ def test_floored_run_does_not_block_a_later_recovery_run(wiring) -> None:
 
     assert result.status == "traded"  # no --force needed
     assert len(up.submitted) == 1
+
+
+def test_dry_run_reports_the_floor_the_same_way_a_live_run_would(wiring) -> None:
+    """A rehearsal must not disagree with the performance.
+
+    A dry run is how you ask "what would it do today?". If it answered
+    "would have placed 5 orders" while the scheduled run would have withheld
+    them, the rehearsal would be actively misleading.
+    """
+    _seed_bars(wiring["store"], SESSION)
+
+    dry = _run(wiring, broker=_EquityBroker(90_000.0), execute=False, min_equity=100_000.0)
+    live = _run(
+        wiring, broker=_EquityBroker(90_000.0), execute=True, min_equity=100_000.0
+    )
+
+    assert dry.status == "floored"
+    assert live.status == "floored"
