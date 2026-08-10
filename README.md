@@ -389,6 +389,21 @@ guard and places nothing:
 See [deploy/README.md](deploy/README.md) for setup, the trade-offs between the
 two, and what to check before switching on `--execute`.
 
+## Operations
+
+The bot runs unattended on GitHub Actions and places live orders on the paper
+account. [docs/RUNBOOK.md](docs/RUNBOOK.md) is the operational reference: how to
+tell it is alive, how to stop it, how to rotate credentials, the quarterly
+retrain, and troubleshooting by symptom.
+
+The three commands worth memorising:
+
+```bash
+git pull && uv run tradersjoy status      # is it alive, and what did it do?
+gh run list --workflow="Daily decision"   # did the schedule actually fire?
+gh workflow disable "Daily decision"      # stop it
+```
+
 ## API documentation
 
 The code is documented with Google-style docstrings. Browse them as HTML with

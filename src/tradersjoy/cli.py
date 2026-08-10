@@ -427,18 +427,49 @@ def autorun(
 
 
 @app.command()
-def status() -> None:
+def status(
+    local: bool = typer.Option(
+        False,
+        "--local",
+        help="Read this machine's journal instead of the deployment's.",
+    ),
+) -> None:
     """Report whether the unattended scheduler is actually running.
 
     The whole point of the heartbeat table: answer "is this thing on?" without
     trusting that no news is good news. Prints the last few firings and warns
     when the most recent one is older than a trading day should allow.
+
+    Reads the *deployment's* journal (``state/journal.sqlite``, which the
+    scheduled run commits back) when that file is present, because "is the bot
+    alive?" almost always means the deployed bot. Falling back to the local
+    journal silently would answer a different question with the same words: a
+    stale local row from a manual experiment looks exactly like a healthy bot,
+    or a dead one, depending on which experiment you last ran. Pass ``--local``
+    to ask about this machine instead. The source is always printed.
     """
     from datetime import timedelta
+    from pathlib import Path
 
+    from tradersjoy.config import PROJECT_ROOT
     from tradersjoy.live.journal import Journal, utc_now
 
-    j = Journal()
+    deployed = PROJECT_ROOT / "state" / "journal.sqlite"
+    if not local and deployed.exists():
+        j = Journal(database_url=f"sqlite:///{deployed}")
+        source = f"deployment journal ({Path('state') / 'journal.sqlite'})"
+        hint = (
+            "`git pull` first: the scheduled run commits its heartbeat, so this "
+            "file is only as current as your last pull."
+        )
+    else:
+        j = Journal()
+        source = "local journal"
+        hint = "These are runs from this machine, not the deployed scheduler."
+
+    typer.echo(f"Source:    {source}")
+    typer.echo(f"           {hint}\n")
+
     j.init_db()
     runs = j.recent_auto_runs(limit=10)
     if not runs:
@@ -458,8 +489,11 @@ def status() -> None:
 
     if age > timedelta(days=4):
         typer.echo(
-            f"\nWARNING: nothing has fired in {_ago(age)}. The timer is probably "
-            "not running. Check:  systemctl --user status tradersjoy.timer"
+            f"\nWARNING: nothing has fired in {_ago(age)}. The scheduler is "
+            "probably not running. Check, in order:\n"
+            "  git pull                                  # is your copy stale?\n"
+            '  gh run list --workflow="Daily decision"   # did GitHub fire it?\n'
+            "  systemctl --user status tradersjoy.timer  # if running locally"
         )
     elif not last.ok:
         typer.echo("\nWARNING: the most recent run did not reach a decision.")
