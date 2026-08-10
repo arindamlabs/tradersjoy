@@ -112,7 +112,7 @@ class AutoRunRecord:
     Attributes:
         ran_at: Wall-clock time the scheduler fired.
         status: Outcome bucket (``traded``, ``dry_run``, ``no_orders``,
-            ``skipped``, ``failed``).
+            ``floored``, ``skipped``, ``failed``).
         reason: Human-readable explanation, especially for skips and failures.
         decision_day: Session decided on, or ``None`` if the run never got that
             far (e.g. it was a weekend).
@@ -129,8 +129,13 @@ class AutoRunRecord:
 
     @property
     def ok(self) -> bool:
-        """Whether this firing reached a decision rather than bailing out."""
-        return self.status in {"traded", "dry_run", "no_orders"}
+        """Whether this firing reached a decision rather than bailing out.
+
+        ``floored`` counts as reaching a decision: the equity floor is the
+        system working as configured, not a fault. It is still worth noticing,
+        which is why the reason string spells it out.
+        """
+        return self.status in {"traded", "dry_run", "no_orders", "floored"}
 
 
 @dataclass(frozen=True, slots=True)

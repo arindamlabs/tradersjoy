@@ -300,3 +300,109 @@ def test_journal_records_the_decision_alongside_the_heartbeat(wiring) -> None:
     assert entry.decision_day == SESSION
     assert entry.executed is True
     assert [o.ticker for o in entry.orders] == [TICKERS[0]]
+
+
+# --------------------------------------------------------------------------
+# Equity floor
+# --------------------------------------------------------------------------
+
+
+class _EquityBroker(FakeBroker):
+    """Broker stub whose account equity can be set per test."""
+
+    def __init__(self, equity: float, **kwargs) -> None:
+        super().__init__(**kwargs)
+        self._equity = equity
+
+    def get_account(self):
+        account = FakeAccount()
+        account.equity = self._equity
+        return account
+
+
+def test_equity_at_or_below_the_floor_withholds_all_orders(wiring) -> None:
+    """The safeguard as specified: nothing is placed, buys or sells."""
+    _seed_bars(wiring["store"], SESSION)
+    broker = _EquityBroker(99_000.0)
+
+    result = _run(wiring, broker=broker, execute=True, min_equity=100_000.0)
+
+    assert result.status == "floored"
+    assert broker.submitted == []
+    assert result.exit_code == 0  # configured behaviour, not a fault
+
+
+def test_floor_is_inclusive(wiring) -> None:
+    """"<= threshold" as asked: exactly at the floor still suspends."""
+    _seed_bars(wiring["store"], SESSION)
+    broker = _EquityBroker(100_000.0)
+
+    result = _run(wiring, broker=broker, execute=True, min_equity=100_000.0)
+
+    assert result.status == "floored"
+    assert broker.submitted == []
+
+
+def test_above_the_floor_trades_normally(wiring) -> None:
+    _seed_bars(wiring["store"], SESSION)
+    broker = _EquityBroker(100_000.01)
+
+    result = _run(wiring, broker=broker, execute=True, min_equity=100_000.0)
+
+    assert result.status == "traded"
+    assert len(broker.submitted) == 1
+
+
+def test_floor_resumes_automatically_without_intervention(wiring) -> None:
+    """No state to clear: recovery is just the next run seeing higher equity."""
+    _seed_bars(wiring["store"], SESSION)
+
+    down = _EquityBroker(95_000.0)
+    assert _run(wiring, broker=down, execute=True, min_equity=100_000.0).status == "floored"
+    assert down.submitted == []
+
+    up = _EquityBroker(101_000.0)
+    recovered = _run(wiring, broker=up, execute=True, min_equity=100_000.0, force=True)
+    assert recovered.status == "traded"
+    assert len(up.submitted) == 1
+
+
+def test_floor_disabled_by_default(wiring) -> None:
+    """Omitting the floor must not silently suspend a poor account."""
+    _seed_bars(wiring["store"], SESSION)
+    broker = _EquityBroker(1_000.0)
+
+    result = _run(wiring, broker=broker, execute=True)
+
+    assert result.status == "traded"
+    assert len(broker.submitted) == 1
+
+
+def test_floored_run_still_records_what_it_wanted(wiring) -> None:
+    """Suspended is not the same as blind: the record shows the withheld plan."""
+    _seed_bars(wiring["store"], SESSION)
+    broker = _EquityBroker(50_000.0)
+
+    _run(wiring, broker=broker, execute=True, min_equity=100_000.0)
+
+    [entry] = wiring["journal"].recent()
+    assert entry.executed is False
+    assert [o.ticker for o in entry.orders] == [TICKERS[0]]  # wanted it, withheld it
+
+    beat = wiring["journal"].last_auto_run()
+    assert beat.status == "floored"
+    assert beat.n_orders == 1
+    assert beat.ok  # configured behaviour, so not flagged as broken
+    assert "floor" in beat.reason
+
+
+def test_floored_run_does_not_block_a_later_recovery_run(wiring) -> None:
+    """A withheld run committed to nothing, so it must not consume the session."""
+    _seed_bars(wiring["store"], SESSION)
+
+    _run(wiring, broker=_EquityBroker(90_000.0), execute=True, min_equity=100_000.0)
+    up = _EquityBroker(110_000.0)
+    result = _run(wiring, broker=up, execute=True, min_equity=100_000.0)
+
+    assert result.status == "traded"  # no --force needed
+    assert len(up.submitted) == 1

@@ -110,6 +110,7 @@ jobs:
             --risk-profile caps \
             --rebalance weekly \
             --lookback-days 500 \
+            --min-equity 100000 \
             $MODE
 
       # Runs even when the decision failed: a refusal writes a heartbeat row too,

@@ -17,6 +17,8 @@ are quiet ones:
   would otherwise re-decide an already-traded day and churn the book.
 - **It cannot be stopped without a keyboard.** A halt file pauses trading
   without editing timers or unsetting credentials.
+- **It keeps trading through losses nobody agreed to.** An optional equity floor
+  suspends execution while the account is at or below a chosen value.
 
 Each guard is a reason to *not* trade. That asymmetry is deliberate: the cost of
 skipping a day is one missed rotation, and the cost of trading on bad state is
@@ -60,7 +62,8 @@ class AutoRunResult:
     """What one unattended firing did, and what the process should exit with.
 
     Attributes:
-        status: ``traded``, ``no_orders``, ``skipped``, or ``failed``.
+        status: ``traded``, ``dry_run``, ``no_orders``, ``floored``,
+            ``skipped``, or ``failed``.
         reason: Human-readable explanation, most useful for skips and failures.
         plan: The decision, when the run got far enough to make one.
         session: The session the run targeted, when it resolved one.
@@ -160,6 +163,7 @@ def run_daily(
     short_window: int = 20,
     long_window: int = 50,
     lookback_days: int = 400,
+    min_equity: float | None = None,
     force: bool = False,
     halt_file: Path | None = None,
     lock_file: Path | None = None,
@@ -189,6 +193,12 @@ def run_daily(
         short_window: Fast SMA window (``sma`` only).
         long_window: Slow SMA window (``sma`` only).
         lookback_days: Days of recent bars to refresh before deciding.
+        min_equity: Suspend execution while account equity is at or below this
+            value; ``None`` disables the floor. The run still decides and
+            journals, so the record shows what it wanted while suspended, and it
+            resumes automatically on the first run where equity is back above
+            the floor. Evaluated fresh from the broker each run, so like every
+            other guard here it carries no state a restart could lose.
         force: Bypass the duplicate-session guard.
         halt_file: Override the halt switch path.
         lock_file: Override the lock file path.
@@ -292,6 +302,26 @@ def run_daily(
                 session=session,
             )
 
+        # Equity floor. Checked last, so a run that is going to refuse anyway for
+        # a data reason still reports the data reason, which is the actionable
+        # one. The run still decides and journals below; it simply does not
+        # execute, so the record shows what it wanted while suspended.
+        floored = False
+        if min_equity is not None and execute:
+            try:
+                equity = broker.get_account().equity
+            except Exception as exc:  # noqa: BLE001 - cannot verify, so do not trade
+                return finish(
+                    "failed", f"could not read equity for the floor check: {exc}",
+                    session=session,
+                )
+            if equity <= min_equity:
+                floored = True
+                execute = False
+                log.warning(
+                    "equity floor: %.2f <= %.2f, execution suspended", equity, min_equity
+                )
+
         try:
             from tradersjoy.live.trader import LiveTrader
 
@@ -302,6 +332,19 @@ def run_daily(
         journal.record_plan(plan, run_at=ran_at)
         for line in plan.results:
             log.info("  %s", line)
+
+        if floored:
+            # Reported even when the strategy wanted nothing, so the heartbeat
+            # shows the floor is active rather than leaving a quiet day
+            # indistinguishable from a normal one.
+            return finish(
+                "floored",
+                f"equity ${plan.equity:,.2f} <= floor ${min_equity:,.2f}; "
+                f"{len(plan.orders)} order(s) withheld, resumes automatically "
+                "once equity is back above the floor",
+                plan,
+                session,
+            )
 
         if not plan.orders:
             return finish("no_orders", "strategy wanted no trades", plan, session)

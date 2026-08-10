@@ -386,6 +386,12 @@ def autorun(
     lookback_days: int = typer.Option(
         400, help="Days of recent data to refresh before deciding."
     ),
+    min_equity: float | None = typer.Option(
+        None,
+        help="Suspend execution while account equity is at or below this value. "
+        "The run still decides and journals; it just places nothing, and resumes "
+        "automatically once equity is back above it. Omit to disable.",
+    ),
     force: bool = typer.Option(
         False, "--force", help="Bypass the already-traded-this-session guard."
     ),
@@ -421,6 +427,7 @@ def autorun(
         short_window=short_window,
         long_window=long_window,
         lookback_days=lookback_days,
+        min_equity=min_equity,
         force=force,
     )
     raise typer.Exit(code=result.exit_code)

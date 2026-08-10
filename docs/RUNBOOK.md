@@ -72,6 +72,7 @@ git log --oneline --grep="chore(journal)" -10
 | `traded` | Placed orders. Normal on a rebalance day. |
 | `no_orders` | Ran fine, strategy wanted nothing. Normal mid-week: the ml strategy only rebalances on the first session of each week. |
 | `dry_run` | Decided but placed nothing. Expected only from a manual dispatch. |
+| `floored` | Equity is at or below the floor, so execution is suspended. See [Equity floor](#equity-floor). |
 | `skipped` | A guard declined: weekend, holiday, market open, already traded, halted. Not a problem. |
 | `failed` | Something was wrong: stale data, broken feed, overlapping run. Exit code 1, so the Actions run shows red. |
 
@@ -110,6 +111,41 @@ automatically. Two follow-ups if you do it:
   be wrong.
 - The run journal survives, because it is our file rather than Alpaca's. The
   equity curve will show the discontinuity.
+
+---
+
+## Equity floor
+
+The deployed run passes `--min-equity 100000`. While account equity is **at or
+below $100,000**, the bot still fires, refreshes data, decides, and journals, but
+**places no orders at all** — not buys, not sells. It resumes on the first run
+where equity is back above the floor. Nothing to reset; the check reads live
+equity fresh every run.
+
+You will see `floored` in `tradersjoy status`, with the equity, the floor, and
+how many orders were withheld.
+
+To change or remove it, edit `--min-equity` in `.github/workflows/trade.yml`.
+Omitting the flag disables the floor entirely.
+
+### Two things to watch
+
+**It will trip often.** $100,000 is the starting balance, so the floor is
+break-even. Out-of-sample this strategy had a -42% max drawdown and spent
+multi-year stretches below its starting value. Expect `floored` to be a common
+status, not a rare alarm.
+
+**It can latch.** Because it blocks *sells* as well as buys, a book that is
+already below the floor is frozen. If those positions keep falling, equity falls
+with them, and there is no mechanism to climb back over the floor except the
+held positions recovering on their own. The safeguard cannot sell you out of the
+situation that triggered it. If you find it stuck there, the exits are: lower
+`--min-equity`, remove it, or flatten manually in the Alpaca dashboard.
+
+This is the same shape as the circuit breaker removed in Phase 6d, which
+measurably made drawdown worse by blocking re-entry during recoveries. Kept here
+deliberately as an explicit, operator-chosen limit rather than a performance
+feature.
 
 ---
 
