@@ -80,10 +80,17 @@ jobs:
           ALPACA_API_SECRET: ${{ secrets.ALPACA_API_SECRET }}
           JOURNAL_DATABASE_URL: sqlite:///${{ github.workspace }}/state/journal.sqlite
         run: |
+          # Full if-blocks rather than `[ cond ] && VAR=x`: Actions runs steps
+          # under `bash -e`, where a false test at statement level aborts the
+          # step. A dry-run dispatch would otherwise "fail" before deciding.
+          MODE=""
           if [ "${{ github.event_name }}" = "workflow_dispatch" ]; then
-            MODE=""
-            [ "${{ inputs.execute }}" = "true" ] && MODE="--execute"
-            [ "${{ inputs.force }}" = "true" ] && MODE="$MODE --force"
+            if [ "${{ inputs.execute }}" = "true" ]; then
+              MODE="--execute"
+            fi
+            if [ "${{ inputs.force }}" = "true" ]; then
+              MODE="$MODE --force"
+            fi
           else
             MODE="$SCHEDULED_EXECUTE"
           fi
@@ -112,7 +119,9 @@ jobs:
           # auto-disabling this schedule after 60 idle days.
           git commit -m "chore(journal): $(date -u +%Y-%m-%d) run [skip ci]"
           git pull --rebase --autostash origin "${{ github.ref_name }}"
-          git push
+          # Explicit refspec: a scheduled checkout can leave HEAD detached, in
+          # which case a bare `git push` has nothing to push to.
+          git push origin "HEAD:${{ github.ref_name }}"
 
       - name: Surface a failed decision
         if: steps.decide.outcome == 'failure'
