@@ -23,6 +23,28 @@ def _journal(tmp_path) -> Journal:
     return j
 
 
+def test_run_timestamps_are_utc_not_local() -> None:
+    """Runs are written on a UTC runner and read back on a laptop elsewhere.
+
+    Regression test. While everything happened on one machine, naive local time
+    was harmless. Once the daily decision moved to a CI runner in UTC, comparing
+    its timestamps against a local clock made a run that fired hours ago look
+    like it was in the future, which broke the staleness check that is the whole
+    reason the heartbeat exists.
+    """
+    from datetime import UTC, datetime
+
+    from tradersjoy.live.journal import utc_now
+
+    stamped = utc_now()
+    reference = datetime.now(UTC).replace(tzinfo=None)
+
+    assert stamped.tzinfo is None  # naive, matching how the rows are stored
+    assert abs((reference - stamped).total_seconds()) < 5
+    # The age of a just-written row must never be negative.
+    assert (utc_now() - stamped).total_seconds() >= 0
+
+
 def test_journal_defaults_to_the_market_data_file(monkeypatch) -> None:
     """With nothing configured, journal and bars share one file, as before."""
     from tradersjoy.config import get_settings

@@ -196,9 +196,9 @@ def run_daily(
     """
     from tradersjoy.data.ingest import load_universe
     from tradersjoy.data.store import Store
-    from tradersjoy.live.journal import Journal
+    from tradersjoy.live.journal import Journal, utc_now
 
-    ran_at = now or datetime.now()
+    ran_at = now or utc_now()
     journal = journal or Journal()
     journal.init_db()
 

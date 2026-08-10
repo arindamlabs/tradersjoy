@@ -18,7 +18,7 @@ from __future__ import annotations
 
 import json
 from dataclasses import dataclass
-from datetime import date, datetime
+from datetime import UTC, date, datetime
 from typing import TYPE_CHECKING
 
 from sqlalchemy import (
@@ -38,6 +38,24 @@ from tradersjoy.core.types import Order, Side
 
 if TYPE_CHECKING:
     from tradersjoy.live.trader import LivePlan
+
+
+def utc_now() -> datetime:
+    """Return the current time as a naive UTC timestamp.
+
+    Every timestamp written to the journal goes through here. Naive *local*
+    time was fine while runs only ever happened on one machine, but the daily
+    decision now runs on a CI runner in UTC and is read back on a laptop in
+    whatever timezone it happens to sit in. Comparing those two directly makes
+    a run that fired hours ago look like it happens in the future, which in
+    turn breaks the "has the scheduler gone quiet?" check that is the entire
+    reason the heartbeat exists.
+
+    Naive rather than aware because the stored rows are naive: keeping one
+    convention on both sides of the database is simpler than converting at
+    every read.
+    """
+    return datetime.now(UTC).replace(tzinfo=None)
 
 
 class JournalBase(DeclarativeBase):

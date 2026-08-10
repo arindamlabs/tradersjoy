@@ -287,13 +287,11 @@ def trade(
         raise typer.Exit(code=2) from exc
 
     if journal:
-        from datetime import datetime
-
-        from tradersjoy.live.journal import Journal
+        from tradersjoy.live.journal import Journal, utc_now
 
         j = Journal()
         j.init_db()
-        j.record_plan(plan, run_at=datetime.now())
+        j.record_plan(plan, run_at=utc_now())
 
     typer.echo(f"Decision date:  {plan.day.isoformat()}  (orders act on next open)")
     typer.echo(f"Account equity: ${plan.equity:,.2f}")
@@ -391,9 +389,9 @@ def status() -> None:
     trusting that no news is good news. Prints the last few firings and warns
     when the most recent one is older than a trading day should allow.
     """
-    from datetime import datetime, timedelta
+    from datetime import timedelta
 
-    from tradersjoy.live.journal import Journal
+    from tradersjoy.live.journal import Journal, utc_now
 
     j = Journal()
     j.init_db()
@@ -407,8 +405,8 @@ def status() -> None:
         return
 
     last = runs[0]
-    age = datetime.now() - last.ran_at
-    typer.echo(f"Last run:  {last.ran_at:%Y-%m-%d %H:%M}  ({_ago(age)} ago)")
+    age = utc_now() - last.ran_at
+    typer.echo(f"Last run:  {last.ran_at:%Y-%m-%d %H:%M} UTC  ({_ago(age)} ago)")
     typer.echo(f"Status:    {last.status}  {last.reason}")
     if last.decision_day:
         typer.echo(f"Session:   {last.decision_day.isoformat()}")
@@ -421,15 +419,19 @@ def status() -> None:
     elif not last.ok:
         typer.echo("\nWARNING: the most recent run did not reach a decision.")
 
-    typer.echo("\nRecent firings:")
+    typer.echo("\nRecent firings (UTC):")
     for r in runs:
         flag = " " if r.ok else "!"
         typer.echo(f" {flag} {r.ran_at:%Y-%m-%d %H:%M}  {r.status:9s} {r.reason}")
 
 
 def _ago(delta) -> str:  # noqa: ANN001 - timedelta
-    """Render a timedelta as a short human duration like ``3d 4h``."""
-    total = int(delta.total_seconds())
+    """Render a timedelta as a short human duration like ``3d 4h``.
+
+    Clamped at zero: a row written by a machine whose clock runs slightly ahead
+    of this one would otherwise render as a nonsensical negative age.
+    """
+    total = max(0, int(delta.total_seconds()))
     days, rem = divmod(total, 86_400)
     hours, rem = divmod(rem, 3_600)
     minutes = rem // 60

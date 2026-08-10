@@ -94,7 +94,9 @@ def _render_automation() -> None:
     moving looks the same whether the strategy is flat or the timer died in June;
     this panel is the only thing on the page that tells them apart.
     """
-    from datetime import datetime, timedelta
+    from datetime import timedelta
+
+    from tradersjoy.live.journal import utc_now
 
     journal = Journal()
     journal.init_db()
@@ -109,15 +111,16 @@ def _render_automation() -> None:
         return
 
     last = runs[0]
-    age = datetime.now() - last.ran_at
+    age = utc_now() - last.ran_at
     c1, c2 = st.columns(2)
-    c1.metric("Last automated run", f"{last.ran_at:%Y-%m-%d %H:%M}")
+    c1.metric("Last automated run", f"{last.ran_at:%Y-%m-%d %H:%M} UTC")
     c2.metric("Status", last.status)
 
     if age > timedelta(days=4):
         st.error(
-            f"Nothing has fired in {age.days} days. The timer is probably not "
-            "running: check `systemctl --user status tradersjoy.timer`."
+            f"Nothing has fired in {age.days} days. The scheduler is probably "
+            "not running: check the repo's Actions tab, or "
+            "`systemctl --user status tradersjoy.timer` if running locally."
         )
     elif not last.ok:
         st.warning(f"Last run did not reach a decision: {last.reason}")
