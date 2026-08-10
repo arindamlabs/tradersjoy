@@ -81,11 +81,17 @@ class WalkForwardResult:
         predictions: Every out-of-sample prediction, across all years, in order.
         overall: The scorecard computed over all predictions stitched together,
             or ``None`` if nothing could be scored.
+        models: Each fold's fitted model, keyed by test year. Retained so a
+            caller can replay the *same* models through the backtester and get
+            an out-of-sample equity curve: classification metrics say whether
+            the ranking is any good, but only a backtest says whether what is
+            left after trading costs is worth having.
     """
 
     folds: list[Fold]
     predictions: list[Prediction]
     overall: ClassificationMetrics | None = field(default=None)
+    models: dict[int, GBMModel] = field(default_factory=dict)
 
     def summary(self) -> str:
         """Render the per-year table plus the stitched overall scorecard."""
@@ -144,6 +150,7 @@ def walk_forward(
 
     folds: list[Fold] = []
     predictions: list[Prediction] = []
+    models: dict[int, GBMModel] = {}
 
     for test_year in test_years:
         boundary = date(test_year, 1, 1)
@@ -156,6 +163,7 @@ def walk_forward(
 
         model = model_factory()
         model.fit([s.row for s in train], [s.label.value for s in train])
+        models[test_year] = model
         scores = model.predict_proba([s.row for s in test])
 
         fold_preds = [
@@ -181,7 +189,9 @@ def walk_forward(
         )
 
     overall = _score(predictions)
-    return WalkForwardResult(folds=folds, predictions=predictions, overall=overall)
+    return WalkForwardResult(
+        folds=folds, predictions=predictions, overall=overall, models=models
+    )
 
 
 def _score(preds: list[Prediction]) -> ClassificationMetrics | None:

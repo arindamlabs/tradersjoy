@@ -6,7 +6,7 @@ An automated paper-trading system: daily-swing strategies on US equities,
 executed against the Alpaca paper-trading API. Built to be a serious learning
 project for quant infrastructure and ML-for-trading, not a get-rich-quick bot.
 
-**Status: Phase 6b** (scheduled automation). The CLI works, the package
+**Status: Phase 6c** (rebalance cadence + walk-forward backtest). The CLI works, the package
 installs, CI is green. Daily bars for a 20-ticker watchlist back to 2005 ingest
 into a local SQLite store via yfinance; an event-driven backtester replays them
 through baseline strategies with realistic, no-look-ahead fills; the same
@@ -17,8 +17,11 @@ walk-forward validation; any strategy can be wrapped in a stateless risk layer
 identically in backtest and live; every live run is recorded to a local journal
 that a read-only Streamlit dashboard reads back as an equity curve and a decision
 log; and a guarded `autorun` command runs the whole thing unattended on a systemd
-timer, refusing to trade on stale data and leaving a heartbeat so a scheduler
-that dies is visible rather than assumed healthy.
+timer or GitHub Actions, refusing to trade on stale data and leaving a heartbeat
+so a scheduler that dies is visible rather than assumed healthy. Trading cadence
+is tied to the model's label horizon, and `evaluate` reports what the whole thing
+would have earned out-of-sample after costs, which so far is roughly what holding
+the universe would have earned.
 
 ## Setup
 
@@ -53,6 +56,9 @@ uv run tradersjoy trade --strategy buyhold --execute
 
 # train an ML model and score it honestly with walk-forward validation
 uv run tradersjoy train
+
+# out-of-sample backtest: does it beat buy-and-hold once you pay to trade it?
+uv run tradersjoy evaluate --horizon 5
 
 # run the trained model as a strategy (dry run)
 uv run tradersjoy trade --strategy ml --model data/models/ml.joblib
@@ -185,6 +191,53 @@ trading session of a calendar period, a pure function of the date. Counting
 day live, because `run_once` starts fresh each session with no memory of previous
 runs. Holidays need no special-casing either: if Monday is shut, the week's first
 session is Tuesday.
+
+### Does it beat buy-and-hold? (walk-forward backtest)
+
+`train` says whether the *ranking* is good. It says nothing about what acting on
+that ranking costs. `evaluate` answers the harder question: it runs the same
+year-by-year walk-forward, keeps each fold's model, then replays the whole
+out-of-sample span through the backtester with **every year driven by the model
+that never saw it**. Unlike `backtest --strategy ml`, nothing in it is in-sample.
+
+```bash
+uv run tradersjoy evaluate --horizon 5      # cadence is matched automatically
+```
+
+Four arms, 2010-2026 out-of-sample, net of 5 bps per fill:
+
+| Arm | AUC | CAGR | vs bench | Sharpe | maxDD | Fills/yr |
+|---|---|---|---|---|---|---|
+| h=5 daily *(pre-fix)* | 0.510 | 23.93% | -4.46% | 0.95 | -35.9% | 858 |
+| **h=5 weekly** *(shipped)* | 0.510 | **29.92%** | **+1.53%** | **1.14** | -42.3% | 241 |
+| h=10 fortnightly | 0.515 | 27.11% | -1.28% | 1.03 | -46.1% | 135 |
+| h=21 monthly | 0.512 | 25.96% | -2.43% | 0.97 | -45.4% | 60 |
+| equal-weight buy & hold | | 28.39% | | 1.04 | -54.9% | |
+
+**What this does establish:** the cadence fix was right, and by more than
+predicted. Moving from daily to weekly is worth **+6.0 percentage points of CAGR**
+out of sample. That result was predicted in advance from an independent turnover
+measurement, which is the kind of confirmation worth trusting.
+
+**What it does not establish: a tradeable edge.** Read honestly:
+
+- The +1.53% is the **best of four arms scored on the same data**. The maximum of
+  four noisy draws is positive by construction.
+- AUC across arms (0.510-0.515) does not track the return ranking. The best-AUC
+  arm is not the best-returning one, so the return spread is mostly noise.
+- Year by year it beat the benchmark **11 times in 17** (binomial p = 0.17, not
+  distinguishable from a coin flip), with annual excess ranging from **-84%** to
+  **+34%**.
+- The **arithmetic** mean annual excess is **negative** (-1.14%). The positive
+  CAGR comes from geometry, not from picking better: the strategy loses less in
+  bad years (2022: -34% vs the benchmark's -50%) and badly lags strong bull years
+  (2020: +49% vs +133%). Smaller drawdowns compound better. That is a real
+  property, but it is a volatility profile, not alpha.
+
+The sober summary: the engineering is sound and the cadence fix is a genuine
+improvement, while the model itself remains at coin-flip ranking skill. That is
+the expected state of an honest first ML trading system, and it is the number
+that should gate any decision to trade for real.
 
 ## Risk management
 
@@ -325,6 +378,7 @@ uv run pdoc -d google tradersjoy -o docs/api
 | 5 | Risk management (position sizing, stops, circuit-breaker) | done |
 | 6 | Run journal + Streamlit dashboard | done |
 | 6b | Scheduled automation (unattended daily run) | done |
+| 6c | Rebalance cadence + walk-forward backtest | done |
 | 7 | Disciplined retraining loop | not started |
 
 ## Design principles

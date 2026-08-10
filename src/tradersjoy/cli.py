@@ -580,6 +580,114 @@ def train(
 
 
 @app.command()
+def evaluate(
+    tickers: str | None = typer.Option(
+        None, help="Comma-separated tickers. Defaults to the universe watchlist."
+    ),
+    horizon: int = typer.Option(
+        5, help="Label look-ahead in trading sessions."
+    ),
+    rebalance: str | None = typer.Option(
+        None,
+        help="Cadence to trade on. Defaults to whichever cadence best matches "
+        "--horizon, which is normally what you want.",
+    ),
+    relative: bool = typer.Option(
+        True,
+        "--relative/--absolute",
+        help="Label by beating the universe median vs plain up/down.",
+    ),
+    train_years: int = typer.Option(
+        5, help="Initial years of history before the first walk-forward test year."
+    ),
+    top_k: int = typer.Option(5, help="Names held at once."),
+    slippage_bps: float = typer.Option(
+        5.0, help="Adverse slippage per fill, in basis points."
+    ),
+    cash: float = typer.Option(100_000.0, help="Starting cash balance."),
+) -> None:
+    """Backtest a model out-of-sample and compare it to buy-and-hold.
+
+    ``train`` reports whether the *ranking* is any good (AUC, top-decile lift).
+    This reports whether what survives after paying to act on that ranking is
+    worth having, which is a different and harder question.
+
+    It runs the same year-by-year walk-forward, keeps each fold's model, then
+    replays the whole out-of-sample span through the backtester with every year
+    driven by the model that never saw it. Unlike ``backtest --strategy ml``,
+    nothing here is in-sample.
+
+    Exits with code 2 on an empty universe or too little data to evaluate.
+    """
+    from tradersjoy.backtest.data import load_history
+    from tradersjoy.data.ingest import load_universe
+    from tradersjoy.data.store import Store
+    from tradersjoy.ml.evaluate import evaluate_horizon
+    from tradersjoy.strategy.cadence import SESSIONS_PER_PERIOD
+
+    if tickers:
+        tick_list = [t.strip().upper() for t in tickers.split(",") if t.strip()]
+    else:
+        tick_list, _ = load_universe()
+    if not tick_list:
+        typer.echo("No tickers to evaluate.")
+        raise typer.Exit(code=2)
+
+    if rebalance is None:
+        # Match the cadence to the horizon: acting more often than the label
+        # predicts is what produced a 6.7%/year slippage drag.
+        rebalance = min(
+            SESSIONS_PER_PERIOD,
+            key=lambda c: abs(SESSIONS_PER_PERIOD[c] - horizon),
+        )
+        typer.echo(f"Matched --rebalance {rebalance} to horizon {horizon}.")
+
+    store = Store()
+    data = load_history(store, tick_list)
+    if not data.trading_days:
+        typer.echo("No bars found. Run `ingest` first?")
+        raise typer.Exit(code=2)
+
+    typer.echo(
+        f"Walk-forward backtest: horizon {horizon}, rebalance {rebalance}, "
+        f"{len(tick_list)} tickers. This trains one model per year; give it a minute."
+    )
+    try:
+        result = evaluate_horizon(
+            data,
+            tick_list,
+            horizon=horizon,
+            rebalance=rebalance,
+            relative=relative,
+            train_years=train_years,
+            top_k=top_k,
+            slippage_bps=slippage_bps,
+            cash=cash,
+        )
+    except ValueError as exc:
+        typer.echo(str(exc))
+        raise typer.Exit(code=2) from exc
+
+    typer.echo("")
+    typer.echo(result.strategy.summary())
+    typer.echo("")
+    typer.echo("Benchmark (equal-weight buy & hold, same span, same slippage):")
+    bm = result.benchmark.metrics
+    typer.echo(f"  CAGR {bm.cagr:.2%}   Sharpe {bm.sharpe:.2f}   maxDD {bm.max_drawdown:.2%}")
+    typer.echo("")
+    typer.echo(
+        f"Excess CAGR vs benchmark: {result.excess_cagr:+.2%}   "
+        f"({result.n_fills} fills, {result.fills_per_year:.0f}/year)"
+    )
+    if result.excess_cagr <= 0:
+        typer.echo(
+            "\nReading this honestly: the strategy did not beat simply holding the "
+            "universe, out-of-sample and after costs. That is the sober and common "
+            "result, and it is the number that should gate going live."
+        )
+
+
+@app.command()
 def dashboard(
     port: int = typer.Option(8501, help="Port for the local Streamlit server."),
 ) -> None:
