@@ -364,7 +364,7 @@ Automation removes that human, so `autorun` makes those checks explicit and
 | Market clock | a session is in progress | today's bar is not final until the close |
 | Duplicate | this session already traded | a retry must not re-decide and churn |
 | Freshness | stored data misses that session | a lagging feed would re-trade a stale opinion |
-| Equity floor | equity <= `--min-equity` | an operator-set limit on trading while down |
+| Equity floor | equity <= `--min-equity` | an operator-set limit on trading while down (optional, **off** in the deployment) |
 
 Every firing writes a **heartbeat** row, including the refusals. That is the
 point of the table: a scheduler that quietly stopped leaves a visible gap instead

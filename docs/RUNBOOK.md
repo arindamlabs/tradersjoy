@@ -65,6 +65,20 @@ You can also just read the git log; the bot commits after every run:
 git log --oneline --grep="chore(journal)" -10
 ```
 
+**3. What did the run actually print?** The Actions log, for when the heartbeat
+reason is not enough detail.
+
+```bash
+RUN=$(gh run list --workflow="Daily decision" --limit 1 --json databaseId -q '.[0].databaseId')
+JOB=$(gh api "repos/{owner}/{repo}/actions/runs/$RUN/jobs" -q '.jobs[0].id')
+gh api "repos/{owner}/{repo}/actions/jobs/$JOB/logs" | grep -E "mode:|INFO|WARNING|ERROR"
+```
+
+Do **not** use `gh run view --log`. On gh 2.45 (the Ubuntu package) it prints
+nothing and exits 0, which reads as "the run logged nothing" rather than "this
+command did not work". The `gh api` route above is unaffected. Newer gh builds
+fix it, so `gh run view --log` may start working after an upgrade.
+
 ### Expected states
 
 | Status | Meaning |
@@ -72,7 +86,7 @@ git log --oneline --grep="chore(journal)" -10
 | `traded` | Placed orders. Normal on a rebalance day. |
 | `no_orders` | Ran fine, strategy wanted nothing. Normal mid-week: the ml strategy only rebalances on the first session of each week. |
 | `dry_run` | Decided but placed nothing. Expected only from a manual dispatch. |
-| `floored` | Equity is at or below the floor, so execution is suspended. See [Equity floor](#equity-floor). |
+| `floored` | Equity is at or below `--min-equity`, so execution is suspended. Not reachable in the current deployment, which sets no floor. See [Equity floor](#equity-floor). |
 | `skipped` | A guard declined: weekend, holiday, market open, already traded, halted. Not a problem. |
 | `failed` | Something was wrong: stale data, broken feed, overlapping run. Exit code 1, so the Actions run shows red. |
 
@@ -116,36 +130,51 @@ automatically. Two follow-ups if you do it:
 
 ## Equity floor
 
-The deployed run passes `--min-equity 100000`. While account equity is **at or
-below $100,000**, the bot still fires, refreshes data, decides, and journals, but
-**places no orders at all** — not buys, not sells. It resumes on the first run
-where equity is back above the floor. Nothing to reset; the check reads live
-equity fresh every run.
+**Not enabled.** The deployed run passes no `--min-equity`. The flag still
+exists and is tested; this section is here because it was tried, and because the
+reasons it came back off are the reasons to think twice before turning it on.
 
-You will see `floored` in `tradersjoy status`, with the equity, the floor, and
-how many orders were withheld.
+What it does when set: while account equity is at or below the value, the bot
+still fires, refreshes data, decides, and journals, but **places no orders at
+all**, not buys and not sells. It resumes on the first run where equity is back
+above the line. Nothing to reset; the check reads live equity fresh every run,
+and you see `floored` in `tradersjoy status` with the equity, the line, and how
+many orders were withheld.
 
-To change or remove it, edit `--min-equity` in `.github/workflows/trade.yml`.
-Omitting the flag disables the floor entirely.
+To enable, add `--min-equity <value>` to the `autorun` call in
+`.github/workflows/trade.yml`.
 
-### Two things to watch
+### Why it was removed
 
-**It will trip often.** $100,000 is the starting balance, so the floor is
-break-even. Out-of-sample this strategy had a -42% max drawdown and spent
-multi-year stretches below its starting value. Expect `floored` to be a common
-status, not a rare alarm.
+Deployed at `--min-equity 100000` on 2026-08-10. It tripped on the very first
+scheduled run, at equity $99,586.49, and withheld a full four-order rebalance
+because the book was $413 under the starting balance.
 
-**It can latch.** Because it blocks *sells* as well as buys, a book that is
-already below the floor is frozen. If those positions keep falling, equity falls
-with them, and there is no mechanism to climb back over the floor except the
-held positions recovering on their own. The safeguard cannot sell you out of the
-situation that triggered it. If you find it stuck there, the exits are: lower
-`--min-equity`, remove it, or flatten manually in the Alpaca dashboard.
+**$100,000 is break-even, not a risk level.** Out-of-sample this strategy had a
+-42% max drawdown and spent multi-year stretches below its starting value, so a
+guard at 0% drawdown is on more than it is off. It does not mean "this went
+wrong", it means "this is slightly red".
 
-This is the same shape as the circuit breaker removed in Phase 6d, which
-measurably made drawdown worse by blocking re-entry during recoveries. Kept here
-deliberately as an explicit, operator-chosen limit rather than a performance
-feature.
+**It latches.** Because it blocks *sells* as well as buys, a book already below
+the line is frozen. Equity keeps moving with the held names, and there is no
+route back over the line except those names recovering on their own. The
+safeguard cannot sell you out of the situation that triggered it. In the live
+case it withheld a sell of the single worst position.
+
+**Blocking only buys would be worse, not better.** The book would drain to cash
+as names rotate out and never re-enter, de-risking into every dip and missing
+every recovery. That is the circuit breaker measured in Phase 6d, which made
+drawdown *worse*; it is why the deployment runs `--risk-profile caps`.
+
+### If you want one anyway
+
+Set it at a level that means something, -15% ($85,000) or -20% ($80,000), not at
+break-even. And be aware that resuming is still up to the held positions.
+
+The version worth building instead would flatten to cash once and halt, needing
+a manual restart. Cash is a stable state, so it cannot latch. The honest
+trade-off is that it locks in the loss at the bottom and puts you in the loop.
+That is not implemented today.
 
 ---
 

@@ -103,6 +103,17 @@ jobs:
           # --rebalance is pinned explicitly rather than left to the default:
           # it materially changes what gets traded, so the deployed cadence
           # should be visible here and not require reading the source.
+          #
+          # No --min-equity here, deliberately. A floor was deployed at 100000
+          # on 2026-08-10 and tripped on its first scheduled run, withholding a
+          # full rebalance because equity was $413 under the starting balance.
+          # Two things were wrong with it: the starting balance is break-even
+          # rather than a risk level, and this strategy's out-of-sample max
+          # drawdown is -42%, so a guard at 0% drawdown is on more than it is
+          # off. Because it blocked sells too, it also froze the book with no
+          # route back over the line except the held names recovering on their
+          # own. The flag still exists and is tested; see docs/RUNBOOK.md before
+          # re-enabling it.
           uv run --frozen tradersjoy autorun \
             --strategy ml \
             --model data/models/ml.joblib \
@@ -110,7 +121,6 @@ jobs:
             --risk-profile caps \
             --rebalance weekly \
             --lookback-days 500 \
-            --min-equity 100000 \
             $MODE
 
       # Runs even when the decision failed: a refusal writes a heartbeat row too,
